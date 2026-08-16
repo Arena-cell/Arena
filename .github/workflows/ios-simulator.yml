@@ -29,14 +29,9 @@ jobs:
       - name: Build for iOS Simulator
         run: flutter build ios --simulator --debug
 
-      - name: Package simulator app
-        run: |
-          cd build/ios/iphonesimulator
-          ditto -c -k --sequesterRsrc --keepParent Runner.app Arena-iOS-Simulator.zip
-
       - name: Upload simulator app
         uses: actions/upload-artifact@v4
         with:
           name: Arena-iOS-Simulator
-          path: build/ios/iphonesimulator/Arena-iOS-Simulator.zip
+          path: build/ios/iphonesimulator/Runner.app
           retention-days: 7
