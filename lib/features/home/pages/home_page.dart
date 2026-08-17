@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/oman_time.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../explore/pages/production_arena_details_page.dart';
@@ -113,9 +114,14 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
     final metadata = user?.userMetadata ?? const <String, dynamic>{};
+    final firstName = '${metadata['first_name'] ?? ''}'.trim();
+    final displayName = '${metadata['display_name'] ?? ''}'.trim();
     final name =
-        '${metadata['first_name'] ?? metadata['display_name'] ?? metadata['username'] ?? ''}'
-            .trim();
+        firstName.isNotEmpty
+            ? firstName
+            : displayName.isEmpty
+            ? ''
+            : displayName.split(RegExp(r'\s+')).first;
     final avatar = metadata['avatar_url'] as String?;
     return Scaffold(
       backgroundColor: const Color(0xFFFFFDF8),
@@ -302,8 +308,8 @@ class _HomeBookingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final arena = booking['arenas'] as Map<String, dynamic>? ?? const {};
-    final start = DateTime.parse(booking['starts_at'] as String).toLocal();
-    final end = DateTime.parse(booking['ends_at'] as String).toLocal();
+    final start = DateTime.parse(booking['starts_at'] as String);
+    final end = DateTime.parse(booking['ends_at'] as String);
     final now = DateTime.now();
     final current = !now.isBefore(start) && now.isBefore(end);
     final images =
@@ -558,11 +564,6 @@ class _HomeMessage extends StatelessWidget {
   );
 }
 
-String _time(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
-}
+String _time(DateTime value) => formatOmanTime12(value);
 
-String _date(DateTime value) =>
-    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+String _date(DateTime value) => formatOmanDate(value);

@@ -58,19 +58,23 @@ class LoginPage extends StatelessWidget {
                   _LandingAction(
                     label: tr('Sign in', 'تسجيل الدخول'),
                     underlined: true,
-                    onTap: () => _open(
-                      context,
-                      const PhoneAuthPage(mode: PhoneAuthMode.signIn),
-                    ),
+                    onTap:
+                        () => _open(
+                          context,
+                          const PhoneAuthPage(mode: PhoneAuthMode.signIn),
+                        ),
                   ),
                   const SizedBox(height: 18),
                   _LandingAction(
                     label: tr('Create account', 'إنشاء حساب'),
                     outlined: true,
-                    onTap: () => _open(
-                      context,
-                      const PhoneAuthPage(mode: PhoneAuthMode.createAccount),
-                    ),
+                    onTap:
+                        () => _open(
+                          context,
+                          const PhoneAuthPage(
+                            mode: PhoneAuthMode.createAccount,
+                          ),
+                        ),
                   ),
                   const SizedBox(height: 12),
                   _LandingAction(
@@ -599,9 +603,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
             ),
           ],
           selected:
-              _gender == null
-                  ? const <String>{}
-                  : <String>{_gender as String},
+              _gender == null ? const <String>{} : <String>{_gender as String},
           emptySelectionAllowed: true,
           showSelectedIcon: true,
           onSelectionChanged:

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/oman_time.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../shared/widgets/arena_empty_state.dart';
 
 class MyBookingsPage extends StatefulWidget {
   const MyBookingsPage({super.key});
@@ -59,8 +61,13 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
         }
         final rows = snapshot.data ?? const [];
         if (rows.isEmpty) {
-          return Center(
-            child: Text(tr('No bookings yet.', 'لا توجد حجوزات بعد.')),
+          return ArenaEmptyState(
+            icon: Icons.event_available_outlined,
+            title: tr('No bookings yet', 'لا توجد حجوزات بعد'),
+            message: tr(
+              'Book an arena and your reservation will appear here.',
+              'احجز ملعبًا وسيظهر حجزك هنا.',
+            ),
           );
         }
         final now = DateTime.now();
@@ -228,10 +235,7 @@ class _BookingCard extends StatelessWidget {
             if (waterCartons > 0) ...[
               const SizedBox(height: 6),
               Text(
-                tr(
-                  '$waterCartons water carton(s)',
-                  '$waterCartons كرتون ماء',
-                ),
+                tr('$waterCartons water carton(s)', '$waterCartons كرتون ماء'),
               ),
             ],
             const Divider(height: 25),
@@ -253,10 +257,7 @@ class _BookingCard extends StatelessWidget {
 }
 
 String _time(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(value);
 }
 
-String _date(DateTime value) =>
-    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+String _date(DateTime value) => formatOmanDate(value);

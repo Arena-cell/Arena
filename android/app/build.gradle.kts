@@ -5,10 +5,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Keep local builds working before Firebase configuration is supplied. Once
+// google-services.json is added, the official plugin generates Firebase's
+// Android resources automatically.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.example.playon"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -24,7 +31,8 @@ android {
         applicationId = "com.example.playon"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // firebase_messaging 16 uses native APIs available from Android 6.0.
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

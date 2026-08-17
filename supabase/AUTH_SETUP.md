@@ -1,23 +1,31 @@
-# Supabase authentication setup
+# Supabase phone authentication setup
 
-## Email verification
+## Required Phone provider
 
-In **Supabase Dashboard → Authentication → Providers → Email**, keep
-**Confirm email** enabled. A user verifies their address before signing in and
-then completes their profile and device-location permission inside the app.
+The Arena entry flow uses Oman phone numbers and SMS OTP for both sign-in and
+account creation. In **Supabase Dashboard → Authentication → Providers →
+Phone**, enable Phone and configure the SMS provider credentials. The current
+project reports Phone as disabled and requires these Twilio values:
 
-## Make reset links open the app
+- Account SID
+- Auth Token
+- Message Service SID
 
-In **Authentication → URL Configuration**, add this Redirect URL exactly:
+Store those values only in the Supabase provider form. Do not add them to
+Flutter, `.env` committed to Git, or GitHub. Disable test OTPs before production.
 
-`playon://auth-callback`
+After a valid code, a new or incomplete account is sent to the separate
+username, first-name, last-name, and gender page. Guest browsing remains
+available without authentication.
 
-The mobile app is configured to receive this link and will open its
-password-update screen after a reset link is opened.
+## OTP validation checklist
 
-## Send mail from the company address
+- New Oman number creates an account, then opens profile completion.
+- Existing number signs in without opening profile completion again.
+- Incorrect and expired codes remain rejected by Supabase.
+- Resend remains disabled for 30 seconds after a code is sent.
+- No fixed or test verification code is present in the app.
 
-In **Project Settings → Auth → SMTP Settings**, enable custom SMTP and enter
-your company mailbox/SMTP provider credentials. Configure the sender name as
-`Arena` and use an authenticated company-domain address. This replaces the
-default Supabase sender.
+Email/password screens remain only as legacy source code and are not linked
+from the current Arena login landing page. Do not enable them as the primary
+entry flow.

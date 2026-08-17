@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/oman_time.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../shared/widgets/arena_empty_state.dart';
 
 import '../../../core/services/production_repository.dart';
 import '../../../core/services/guest_session.dart';
@@ -38,8 +40,9 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
 
   @override
   void dispose() {
-    if (_matchChannel != null) {
-      Supabase.instance.client.removeChannel(_matchChannel!);
+    final channel = _matchChannel;
+    if (channel != null) {
+      Supabase.instance.client.removeChannel(channel);
     }
     super.dispose();
   }
@@ -59,7 +62,9 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
     return {'match': match, 'players': players, 'profiles': profiles};
   }
 
-  void _reload() => setState(() => _data = _load());
+  void _reload() {
+    if (mounted) setState(() => _data = _load());
+  }
 
   Future<void> _join() async {
     if (!await GuestSession.requireAccount(context, action: 'join a game')) {
@@ -67,8 +72,21 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
     }
     if (!mounted) return;
     try {
-      await ProductionRepository.joinMatch(widget.matchId);
+      final status = await ProductionRepository.joinMatch(widget.matchId);
+      if (!mounted) return;
       _reload();
+      if (status == 'requested') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              tr(
+                'Your join request was sent to the organizer.',
+                'تم إرسال طلب انضمامك إلى المنظم.',
+              ),
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -85,6 +103,7 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
   Future<void> _leave() async {
     try {
       await ProductionRepository.leaveMatch(widget.matchId);
+      if (!mounted) return;
       _reload();
     } catch (e) {
       if (mounted) {
@@ -104,12 +123,13 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
       context: context,
       delegate: _PlayerSearch(),
     );
-    if (result == null) return;
+    if (!mounted || result == null) return;
     try {
       await ProductionRepository.invitePlayer(
         widget.matchId,
         result['id'] as String,
       );
+      if (!mounted) return;
       _reload();
     } catch (e) {
       if (mounted) {
@@ -121,6 +141,40 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _respondToRequest(String userId, bool accept) async {
+    try {
+      await ProductionRepository.respondToJoinRequest(
+        widget.matchId,
+        userId,
+        accept: accept,
+      );
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accept
+                ? tr('Join request accepted.', 'تم قبول طلب الانضمام.')
+                : tr('Join request declined.', 'تم رفض طلب الانضمام.'),
+          ),
+        ),
+      );
+    } on PostgrestException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizedBackendError(
+              error.message,
+              englishFallback: 'Could not update the join request.',
+              arabicFallback: 'تعذر تحديث طلب الانضمام.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -172,14 +226,19 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
         final profiles = data['profiles'] as Map<String, Map<String, dynamic>>;
         final me = Supabase.instance.client.auth.currentUser?.id;
         final joined = me != null && players.any((p) => p['user_id'] == me);
+        final requested =
+            me != null &&
+            players.any(
+              (p) => p['user_id'] == me && p['status'] == 'requested',
+            );
         final isHost = me != null && match['host_id'] == me;
         final remaining =
             (match['max_players'] as int) -
             players.where((p) => p['status'] == 'joined').length;
         final host = profiles[match['host_id']] ?? {};
         final images = List<String>.from(arena['image_urls'] ?? []);
-        final start = DateTime.parse(match['starts_at'] as String).toLocal();
-        final end = DateTime.parse(match['ends_at'] as String).toLocal();
+        final start = DateTime.parse(match['starts_at'] as String);
+        final end = DateTime.parse(match['ends_at'] as String);
         return Scaffold(
           body: Stack(
             children: [
@@ -249,7 +308,7 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                             ),
                           const SizedBox(height: 12),
                           Text(
-                            '${tr('Host', 'المضيف')}: @${host['username'] ?? tr('unknown', 'غير معروف')}',
+                            '${tr('Host', 'المضيف')}: ${host['first_name'] ?? host['display_name'] ?? tr('unknown', 'غير معروف')}',
                           ),
                           Text(
                             localizedData(
@@ -292,7 +351,8 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                               ),
                             ),
                           const SizedBox(height: 22),
-                          if (match['show_joined_players'] != false) ...[
+                          if (isHost ||
+                              match['show_joined_players'] != false) ...[
                             Text(
                               tr('Joined players', 'اللاعبون المنضمون'),
                               style: const TextStyle(
@@ -302,6 +362,7 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                             ),
                             ...players.map((p) {
                               final profile = profiles[p['user_id']] ?? {};
+                              final status = '${p['status'] ?? ''}';
                               return ListTile(
                                 leading: CircleAvatar(
                                   backgroundImage:
@@ -323,11 +384,46 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                                           .first ??
                                       tr('Player', 'لاعب'),
                                 ),
-                                subtitle: Text(
-                                  p['status'] == 'joined'
-                                      ? tr('Joined', 'منضم')
-                                      : tr('Invited', 'مدعو'),
-                                ),
+                                subtitle: Text(switch (status) {
+                                  'joined' => tr('Joined', 'منضم'),
+                                  'requested' => tr(
+                                    'Requested to join',
+                                    'طلب الانضمام',
+                                  ),
+                                  'rejected' => tr('Declined', 'مرفوض'),
+                                  _ => tr('Invited', 'مدعو'),
+                                }),
+                                trailing:
+                                    isHost && status == 'requested'
+                                        ? Wrap(
+                                          spacing: 4,
+                                          children: [
+                                            IconButton(
+                                              tooltip: tr('Accept', 'قبول'),
+                                              onPressed:
+                                                  () => _respondToRequest(
+                                                    '${p['user_id']}',
+                                                    true,
+                                                  ),
+                                              icon: const Icon(
+                                                Icons.check_circle_outline,
+                                                color: Colors.green,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: tr('Decline', 'رفض'),
+                                              onPressed:
+                                                  () => _respondToRequest(
+                                                    '${p['user_id']}',
+                                                    false,
+                                                  ),
+                                              icon: const Icon(
+                                                Icons.cancel_outlined,
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                        : null,
                               );
                             }),
                           ] else
@@ -380,12 +476,22 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                               onPressed:
                                   joined
                                       ? _leave
-                                      : (remaining <= 0 ? null : _join),
+                                      : (requested || remaining <= 0
+                                          ? null
+                                          : _join),
                               child: Text(
                                 GuestSession.isGuest
-                                    ? tr('Sign in to join', 'سجل الدخول للانضمام')
+                                    ? tr(
+                                      'Sign in to join',
+                                      'سجل الدخول للانضمام',
+                                    )
                                     : joined
                                     ? tr('Leave match', 'مغادرة الحجز')
+                                    : requested
+                                    ? tr(
+                                      'Request pending',
+                                      'الطلب قيد المراجعة',
+                                    )
                                     : remaining <= 0
                                     ? tr('Match full', 'الحجز مكتمل')
                                     : tr('Join match', 'انضم إلى الحجز'),
@@ -403,16 +509,15 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
 }
 
 String _matchTime(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(value);
 }
-String _matchDate(DateTime value) =>
-    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+
+String _matchDate(DateTime value) => formatOmanDate(value);
 
 class _PlayerSearch extends SearchDelegate<Map<String, dynamic>?> {
   @override
-  String get searchFieldLabel => tr('Search by username or name', 'ابحث باسم المستخدم أو الاسم');
+  String get searchFieldLabel =>
+      tr('Search by username or name', 'ابحث باسم المستخدم أو الاسم');
   Future<List<Map<String, dynamic>>> _find() async {
     if (query.trim().isEmpty) return [];
     final rows = await Supabase.instance.client
@@ -439,8 +544,14 @@ class _PlayerSearch extends SearchDelegate<Map<String, dynamic>?> {
       }
       final people = snapshot.data ?? const <Map<String, dynamic>>[];
       if (people.isEmpty) {
-        return Center(
-          child: Text(tr('No players found.', 'لم يتم العثور على لاعبين.')),
+        return ArenaEmptyState(
+          icon: Icons.group_off_outlined,
+          title: tr('No players found', 'لم يتم العثور على لاعبين'),
+          message: tr(
+            'Try another name or username.',
+            'جرّب اسمًا أو اسم مستخدم آخر.',
+          ),
+          showFieldBackground: false,
         );
       }
       return ListView(

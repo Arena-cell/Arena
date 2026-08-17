@@ -23,11 +23,12 @@ class ProductionRepository {
     String? profileGender;
     if (user != null) {
       try {
-        final profile = await client
-            .from('profiles')
-            .select('gender')
-            .eq('id', user.id)
-            .maybeSingle();
+        final profile =
+            await client
+                .from('profiles')
+                .select('gender')
+                .eq('id', user.id)
+                .maybeSingle();
         final value = '${profile?['gender'] ?? ''}'.toLowerCase();
         if (value == 'men' || value == 'women') profileGender = value;
       } on PostgrestException {
@@ -64,9 +65,7 @@ class ProductionRepository {
     return arenas
         .where((arena) {
           final sports = (arena['sports'] as List?) ?? const [];
-          return sports.any(
-            (value) => _normalizedSport('$value') == requested,
-          );
+          return sports.any((value) => _normalizedSport('$value') == requested);
         })
         .skip(offset)
         .take(limit)
@@ -87,11 +86,12 @@ class ProductionRepository {
     var query = client.from('arenas').select().eq('id', arenaId);
     final userId = client.auth.currentUser?.id;
     if (userId != null) {
-      final profile = await client
-          .from('profiles')
-          .select('gender')
-          .eq('id', userId)
-          .maybeSingle();
+      final profile =
+          await client
+              .from('profiles')
+              .select('gender')
+              .eq('id', userId)
+              .maybeSingle();
       final gender = profile?['gender'] as String?;
       if (gender == 'men' || gender == 'women') {
         query = query.eq('audience_gender', gender ?? '');
@@ -210,8 +210,13 @@ class ProductionRepository {
     }
   }
 
-  static Future<void> joinMatch(String matchId) =>
-      client.rpc('join_match', params: {'match_id': matchId});
+  static Future<String> joinMatch(String matchId) async {
+    final result = await client.rpc(
+      'request_match_join',
+      params: {'p_match_id': matchId},
+    );
+    return result?.toString() ?? 'joined';
+  }
 
   static Future<void> leaveMatch(String matchId) =>
       client.rpc('leave_match', params: {'match_id': matchId});
@@ -219,6 +224,15 @@ class ProductionRepository {
   static Future<void> invitePlayer(String matchId, String userId) => client.rpc(
     'join_match',
     params: {'match_id': matchId, 'target_user_id': userId},
+  );
+
+  static Future<void> respondToJoinRequest(
+    String matchId,
+    String userId, {
+    required bool accept,
+  }) => client.rpc(
+    'respond_match_join_request',
+    params: {'p_match_id': matchId, 'p_user_id': userId, 'p_accept': accept},
   );
 
   static Future<bool> isFavorite(String arenaId) async =>

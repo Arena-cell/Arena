@@ -91,9 +91,9 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                       ),
                   textAlign: TextAlign.center,
                 ),
-                if (_message != null) ...[
+                if (_message case final message?) ...[
                   const SizedBox(height: 16),
-                  Text(_message!, textAlign: TextAlign.center),
+                  Text(message, textAlign: TextAlign.center),
                 ],
                 const SizedBox(height: 28),
                 if (widget.email != null)

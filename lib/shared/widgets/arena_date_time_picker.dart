@@ -403,6 +403,6 @@ int _hour12(int hour) {
 }
 
 String _displayTime(DateTime value) {
-  final period = value.hour >= 12 ? 'PM' : 'AM';
+  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
   return '${_hour12(value.hour)}:${value.minute.toString().padLeft(2, '0')} $period';
 }
