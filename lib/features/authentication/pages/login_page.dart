@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'profile_completion_page.dart';
+import 'phone_auth_page.dart';
 import 'verify_email_page.dart';
 import '../../navigation/main_navigation_page.dart';
 import '../../../main.dart';
@@ -57,13 +58,19 @@ class LoginPage extends StatelessWidget {
                   _LandingAction(
                     label: tr('Sign in', 'تسجيل الدخول'),
                     underlined: true,
-                    onTap: () => _open(context, const SignInPage()),
+                    onTap: () => _open(
+                      context,
+                      const PhoneAuthPage(mode: PhoneAuthMode.signIn),
+                    ),
                   ),
                   const SizedBox(height: 18),
                   _LandingAction(
                     label: tr('Create account', 'إنشاء حساب'),
                     outlined: true,
-                    onTap: () => _open(context, const CreateAccountPage()),
+                    onTap: () => _open(
+                      context,
+                      const PhoneAuthPage(mode: PhoneAuthMode.createAccount),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _LandingAction(
