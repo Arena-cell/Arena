@@ -23,6 +23,14 @@ Do not validate it until all legacy `mixed` or null rows have been reviewed.
 
 ## External services still required
 
+### Phone authentication
+
+The user-facing authentication flow now uses an Oman mobile number, SMS OTP,
+and then a separate username/first-name/last-name/gender step. To deliver real
+codes, enable the Phone provider in Supabase Authentication and configure a
+supported SMS provider. Until that provider is configured, Supabase will reject
+the send-code request and the app shows a localized configuration message.
+
 ### Push notifications
 
 The database notification feed, unread state, unique event key, device-token
