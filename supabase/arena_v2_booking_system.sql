@@ -32,7 +32,12 @@ alter table public.arenas
   add column if not exists address_ar text,
   add column if not exists address_en text,
   add column if not exists google_maps_url text,
+  add column if not exists court_count integer not null default 1,
   add column if not exists is_active boolean not null default true;
+
+alter table public.arenas drop constraint if exists arenas_court_count_check;
+alter table public.arenas add constraint arenas_court_count_check
+check (court_count between 1 and 50);
 
 alter table public.arenas drop constraint if exists arenas_audience_gender_check;
 alter table public.arenas
@@ -56,6 +61,44 @@ alter table public.arena_courts enable row level security;
 drop policy if exists "arena courts are readable" on public.arena_courts;
 create policy "arena courts are readable"
 on public.arena_courts for select to anon, authenticated using (true);
+
+-- Keeps the physical units synchronized with the count selected by an admin
+-- or stadium owner. Reducing the count is rejected while a removed unit still
+-- has an active future booking or match.
+create or replace function public.sync_arena_courts_from_count()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' and new.court_count < old.court_count and exists (
+    select 1 from public.arena_courts c
+    where c.arena_id = new.id and c.court_number > new.court_count
+      and (
+        exists (
+          select 1 from public.bookings b where b.court_id = c.id
+            and coalesce(b.status, 'upcoming') <> 'cancelled' and b.ends_at > now()
+        ) or exists (
+          select 1 from public.matches m where m.court_id = c.id
+            and coalesce(m.status, 'upcoming') <> 'cancelled' and m.ends_at > now()
+        )
+      )
+  ) then
+    raise exception 'COURT_COUNT_HAS_ACTIVE_BOOKINGS';
+  end if;
+
+  insert into public.arena_courts(arena_id, court_number, label_ar, label_en, is_active)
+  select new.id, n, 'الملعب رقم ' || n, 'Court ' || n, true
+  from generate_series(1, new.court_count) n
+  on conflict (arena_id, court_number) do update set is_active = true;
+
+  update public.arena_courts set is_active = false
+  where arena_id = new.id and court_number > new.court_count;
+  return new;
+end;
+$$;
+
+drop trigger if exists arenas_sync_court_count on public.arenas;
+create trigger arenas_sync_court_count
+after insert or update of court_count on public.arenas
+for each row execute function public.sync_arena_courts_from_count();
 
 alter table public.bookings
   add column if not exists court_id uuid references public.arena_courts(id) on delete restrict,
@@ -155,11 +198,9 @@ drop trigger if exists matches_prevent_arena_time_conflict on public.matches;
 
 -- Creates missing default Court 1 rows without changing existing data.
 insert into public.arena_courts (arena_id, court_number, label_ar, label_en)
-select a.id, 1, 'الملعب رقم 1', 'Court 1'
+select a.id, n, 'الملعب رقم ' || n, 'Court ' || n
 from public.arenas a
-where not exists (
-  select 1 from public.arena_courts c where c.arena_id = a.id
-)
+cross join lateral generate_series(1, a.court_count) n
 on conflict (arena_id, court_number) do nothing;
 
 -- Existing demo bookings are intentionally not backfilled because the owner

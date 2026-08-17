@@ -12,8 +12,9 @@ be candidates for a separately approved cleanup. No deletion SQL is included
 on purpose.
 
 After applying the migration, classify every legacy arena as `men` or `women`,
-create the required rows in `arena_courts`, and then validate the deferred arena
-gender constraint:
+set `court_count` to the real number of physical units, and then validate the
+deferred arena gender constraint. Setting `court_count = 4` automatically
+creates Courts 1–4; users never choose the number themselves.
 
 ```sql
 alter table public.arenas validate constraint arenas_audience_gender_check;
