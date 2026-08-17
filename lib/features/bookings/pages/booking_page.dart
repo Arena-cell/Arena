@@ -465,7 +465,7 @@ class _BookingPageState extends State<BookingPage> {
                 const SizedBox(height: 16),
                 if (_coupons.isNotEmpty) ...[
                   DropdownButtonFormField<String?>(
-                    value: _couponId,
+                    initialValue: _couponId,
                     decoration: InputDecoration(
                       labelText: tr('Discount coupon', 'كوبون الخصم'),
                       border: OutlineInputBorder(

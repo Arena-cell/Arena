@@ -895,7 +895,12 @@ class _PaymentStep extends StatelessWidget {
                             : tr('Visa', 'بطاقة مصرفية'),
                       ),
                       value: item,
+                      // RadioGroup is unavailable on older supported Flutter
+                      // versions; keep the compatible API until the minimum
+                      // SDK is raised.
+                      // ignore: deprecated_member_use
                       groupValue: value,
+                      // ignore: deprecated_member_use
                       onChanged: (choice) {
                         if (choice != null) onChanged(choice);
                       },

@@ -94,7 +94,7 @@ class ProductionRepository {
           .maybeSingle();
       final gender = profile?['gender'] as String?;
       if (gender == 'men' || gender == 'women') {
-        query = query.eq('audience_gender', gender);
+        query = query.eq('audience_gender', gender ?? '');
       }
     }
     final row = await query.single();
