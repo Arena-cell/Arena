@@ -22,6 +22,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   final address = TextEditingController();
   XFile? pickedImage;
   String? avatarUrl;
+  String? gender;
   bool loading = true;
   bool saving = false;
 
@@ -51,7 +52,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       final profile =
           await client
               .from('profiles')
-              .select('username, display_name, avatar_url, bio, city')
+              .select('username, display_name, avatar_url, bio, city, gender')
               .eq('id', user.id)
               .maybeSingle();
       final display = (profile?['display_name'] as String? ?? '').trim().split(
@@ -71,12 +72,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
       address.text =
           profile?['city'] as String? ?? metadata['address'] as String? ?? '';
       avatarUrl = profile?['avatar_url'] as String?;
+      gender = profile?['gender'] as String? ?? metadata['gender'] as String?;
     } catch (_) {
       username.text = metadata['username'] as String? ?? '';
       firstName.text = metadata['first_name'] as String? ?? '';
       lastName.text = metadata['last_name'] as String? ?? '';
       bio.text = metadata['bio'] as String? ?? '';
       address.text = metadata['address'] as String? ?? '';
+      gender = metadata['gender'] as String?;
     }
     if (mounted) setState(() => loading = false);
   }
@@ -99,17 +102,18 @@ class _EditProfilePageState extends State<EditProfilePage> {
     setState(() => saving = true);
     try {
       var uploadedUrl = avatarUrl;
-      if (pickedImage != null) {
+      final selectedImage = pickedImage;
+      if (selectedImage != null) {
         final extension =
-            pickedImage!.name.contains('.')
-                ? pickedImage!.name.split('.').last
+            selectedImage.name.contains('.')
+                ? selectedImage.name.split('.').last
                 : 'jpg';
         final path = '${user.id}/avatar.$extension';
         await client.storage
             .from('avatars')
             .upload(
               path,
-              File(pickedImage!.path),
+              File(selectedImage.path),
               fileOptions: const FileOptions(upsert: true),
             );
         uploadedUrl = client.storage.from('avatars').getPublicUrl(path);
@@ -120,6 +124,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         'last_name': lastName.text.trim(),
         'bio': bio.text.trim(),
         'address': address.text.trim(),
+        'gender': gender,
       };
       await client.auth.updateUser(UserAttributes(data: data));
       await client
@@ -130,6 +135,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                 '${firstName.text.trim()} ${lastName.text.trim()}'.trim(),
             'bio': bio.text.trim(),
             'city': address.text.trim(),
+            'gender': gender,
             if (uploadedUrl != null) 'avatar_url': uploadedUrl,
           })
           .eq('id', user.id);
@@ -177,6 +183,16 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
   }
 
+  ImageProvider? _profileImage() {
+    final selectedImage = pickedImage;
+    if (selectedImage != null) return FileImage(File(selectedImage.path));
+    final remoteAvatar = avatarUrl;
+    if (remoteAvatar != null && remoteAvatar.isNotEmpty) {
+      return NetworkImage(remoteAvatar);
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: AppColors.background,
@@ -200,13 +216,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                           CircleAvatar(
                             radius: 72,
                             backgroundColor: const Color(0xFFFFFDF8),
-                            backgroundImage:
-                                pickedImage != null
-                                    ? FileImage(File(pickedImage!.path))
-                                    : (avatarUrl == null
-                                            ? null
-                                            : NetworkImage(avatarUrl!))
-                                        as ImageProvider?,
+                            backgroundImage: _profileImage(),
                             child:
                                 pickedImage == null && avatarUrl == null
                                     ? const Icon(
@@ -235,6 +245,31 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     _Field(
                       label: tr('Last name', 'اسم العائلة'),
                       controller: lastName,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      tr('Gender', 'الجنس'),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                          value: 'men',
+                          label: Text(tr('Male', 'ذكر')),
+                        ),
+                        ButtonSegment(
+                          value: 'women',
+                          label: Text(tr('Female', 'أنثى')),
+                        ),
+                      ],
+                      selected:
+                          gender == null
+                              ? const <String>{}
+                              : <String>{gender as String},
+                      emptySelectionAllowed: true,
+                      onSelectionChanged:
+                          (value) => setState(() => gender = value.firstOrNull),
                     ),
                     _Field(
                       label: tr('Username', 'اسم المستخدم'),

@@ -264,10 +264,16 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                             '${_matchDate(start)} · ${_matchTime(start)} → ${_matchTime(end)}',
                           ),
                           Text(
-                            'Duration: ${end.difference(start).inMinutes} minutes',
+                            tr(
+                              'Duration: ${end.difference(start).inMinutes} minutes',
+                              'المدة: ${end.difference(start).inMinutes} دقيقة',
+                            ),
                           ),
                           Text(
-                            'Players: ${players.where((p) => p['status'] == 'joined').length}/${match['max_players']} · $remaining slots remaining',
+                            tr(
+                              'Players: ${players.where((p) => p['status'] == 'joined').length}/${match['max_players']} · $remaining slots remaining',
+                              'اللاعبون: ${players.where((p) => p['status'] == 'joined').length}/${match['max_players']} · متبقي $remaining',
+                            ),
                           ),
                           Row(
                             children: [
@@ -310,12 +316,17 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                                           : null,
                                 ),
                                 title: Text(
-                                  profile['display_name'] as String? ??
-                                      profile['username'] as String? ??
+                                  profile['first_name'] as String? ??
+                                      (profile['display_name'] as String?)
+                                          ?.trim()
+                                          .split(RegExp(r'\s+'))
+                                          .first ??
                                       tr('Player', 'لاعب'),
                                 ),
                                 subtitle: Text(
-                                  '@${profile['username'] ?? ''} · ${p['status'] == 'joined' ? tr('Joined', 'منضم') : tr('Invited', 'مدعو')}',
+                                  p['status'] == 'joined'
+                                      ? tr('Joined', 'منضم')
+                                      : tr('Invited', 'مدعو'),
                                 ),
                               );
                             }),
@@ -372,12 +383,12 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
                                       : (remaining <= 0 ? null : _join),
                               child: Text(
                                 GuestSession.isGuest
-                                    ? 'Sign in to join'
+                                    ? tr('Sign in to join', 'سجل الدخول للانضمام')
                                     : joined
-                                    ? 'Leave match'
+                                    ? tr('Leave match', 'مغادرة الحجز')
                                     : remaining <= 0
-                                    ? 'Match full'
-                                    : 'Join match',
+                                    ? tr('Match full', 'الحجز مكتمل')
+                                    : tr('Join match', 'انضم إلى الحجز'),
                               ),
                             ),
                   ),
@@ -391,14 +402,17 @@ class _MatchDetailsPageState extends State<MatchDetailsPage> {
   );
 }
 
-String _matchTime(DateTime value) =>
-    '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+String _matchTime(DateTime value) {
+  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
+  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
+  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+}
 String _matchDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 
 class _PlayerSearch extends SearchDelegate<Map<String, dynamic>?> {
   @override
-  String get searchFieldLabel => 'Search by username or name';
+  String get searchFieldLabel => tr('Search by username or name', 'ابحث باسم المستخدم أو الاسم');
   Future<List<Map<String, dynamic>>> _find() async {
     if (query.trim().isEmpty) return [];
     final rows = await Supabase.instance.client
@@ -423,7 +437,7 @@ class _PlayerSearch extends SearchDelegate<Map<String, dynamic>?> {
       if (!snapshot.hasData) {
         return const Center(child: CircularProgressIndicator());
       }
-      final people = snapshot.data!;
+      final people = snapshot.data ?? const <Map<String, dynamic>>[];
       if (people.isEmpty) {
         return Center(
           child: Text(tr('No players found.', 'لم يتم العثور على لاعبين.')),

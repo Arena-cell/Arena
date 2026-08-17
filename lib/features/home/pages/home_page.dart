@@ -17,13 +17,16 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late Future<List<Map<String, dynamic>>> _bookings;
+  late Future<int> _unreadNotifications;
   Timer? _refreshTimer;
   RealtimeChannel? _bookingsChannel;
+  RealtimeChannel? _notificationsChannel;
 
   @override
   void initState() {
     super.initState();
     _bookings = _loadBookings();
+    _unreadNotifications = _loadUnreadNotifications();
     _bookingsChannel =
         Supabase.instance.client.channel('home-bookings')
           ..onPostgresChanges(
@@ -35,6 +38,21 @@ class _HomePageState extends State<HomePage> {
             },
           )
           ..subscribe();
+    _notificationsChannel =
+        Supabase.instance.client.channel('home-notifications')
+          ..onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'notifications',
+            callback: (_) {
+              if (mounted) {
+                setState(
+                  () => _unreadNotifications = _loadUnreadNotifications(),
+                );
+              }
+            },
+          )
+          ..subscribe();
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) _reload();
     });
@@ -43,10 +61,26 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    if (_bookingsChannel != null) {
-      Supabase.instance.client.removeChannel(_bookingsChannel!);
+    final bookingsChannel = _bookingsChannel;
+    if (bookingsChannel != null) {
+      Supabase.instance.client.removeChannel(bookingsChannel);
+    }
+    final notificationsChannel = _notificationsChannel;
+    if (notificationsChannel != null) {
+      Supabase.instance.client.removeChannel(notificationsChannel);
     }
     super.dispose();
+  }
+
+  Future<int> _loadUnreadNotifications() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return 0;
+    final rows = await Supabase.instance.client
+        .from('notifications')
+        .select('id')
+        .eq('user_id', userId)
+        .isFilter('read_at', null);
+    return (rows as List).length;
   }
 
   Future<List<Map<String, dynamic>>> _loadBookings() async {
@@ -148,17 +182,33 @@ class _HomePageState extends State<HomePage> {
                     ),
                     IconButton.outlined(
                       tooltip: tr('Notifications', 'الإشعارات'),
-                      icon: const Icon(
-                        Icons.notifications_none_rounded,
-                        size: 30,
-                        color: AppColors.warmWhite,
-                      ),
-                      onPressed:
-                          () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => const NotificationsPage(),
+                      icon: FutureBuilder<int>(
+                        future: _unreadNotifications,
+                        builder: (context, snapshot) {
+                          final count = snapshot.data ?? 0;
+                          return Badge(
+                            isLabelVisible: count > 0,
+                            label: Text(count > 99 ? '99+' : '$count'),
+                            child: const Icon(
+                              Icons.notifications_none_rounded,
+                              size: 30,
+                              color: AppColors.warmWhite,
                             ),
+                          );
+                        },
+                      ),
+                      onPressed: () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const NotificationsPage(),
                           ),
+                        );
+                        if (!mounted) return;
+                        setState(
+                          () =>
+                              _unreadNotifications = _loadUnreadNotifications(),
+                        );
+                      },
                     ),
                   ],
                 ),

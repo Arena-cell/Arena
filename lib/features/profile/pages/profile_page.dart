@@ -7,6 +7,7 @@ import '../../bookings/pages/my_bookings_page.dart';
 import '../../authentication/pages/login_page.dart';
 import '../../../core/services/guest_session.dart';
 import 'edit_profile_page.dart';
+import 'rewards_page.dart';
 
 const _green = Color(0xFF000000);
 const _pageBackground = Color(0xFFFFFDF8);
@@ -123,23 +124,27 @@ class ProfilePage extends StatelessWidget {
                     const SizedBox(height: 22),
                     TextField(
                       controller: username,
-                      decoration: const InputDecoration(labelText: 'Username'),
+                      decoration: InputDecoration(
+                        labelText: tr('Username', 'اسم المستخدم'),
+                      ),
                     ),
                     TextField(
                       controller: firstName,
-                      decoration: const InputDecoration(
-                        labelText: 'First name',
+                      decoration: InputDecoration(
+                        labelText: tr('First name', 'الاسم الأول'),
                       ),
                     ),
                     TextField(
                       controller: lastName,
-                      decoration: const InputDecoration(labelText: 'Last name'),
+                      decoration: InputDecoration(
+                        labelText: tr('Last name', 'اسم العائلة'),
+                      ),
                     ),
                     TextField(
                       controller: email,
                       keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'Email address',
+                      decoration: InputDecoration(
+                        labelText: tr('Email address', 'البريد الإلكتروني'),
                       ),
                     ),
                     const SizedBox(height: 22),
@@ -309,6 +314,11 @@ class ProfilePage extends StatelessWidget {
                   icon: Icons.calendar_month_outlined,
                   title: tr('My bookings', 'حجوزاتي'),
                   onTap: () => _open(context, const MyBookingsPage()),
+                ),
+                _MenuRow(
+                  icon: Icons.workspace_premium_outlined,
+                  title: tr('Points & coupons', 'النقاط والكوبونات'),
+                  onTap: () => _open(context, const RewardsPage()),
                 ),
                 _MenuRow(
                   icon: Icons.credit_card_outlined,
@@ -758,7 +768,10 @@ class _StaticItem extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (value != null)
-              Text(value!, style: const TextStyle(color: Color(0x99000000))),
+              Text(
+                value as String,
+                style: const TextStyle(color: Color(0x99000000)),
+              ),
             const Icon(Icons.chevron_right_rounded),
           ],
         ),

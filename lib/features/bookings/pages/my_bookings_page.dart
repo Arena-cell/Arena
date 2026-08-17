@@ -25,7 +25,7 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
     if (userId == null) return [];
     final rows = await Supabase.instance.client
         .from('bookings')
-        .select('*, arenas(*)')
+        .select('*, arenas(*), arena_courts(court_number,label_ar,label_en)')
         .eq('user_id', userId)
         .order('starts_at', ascending: false);
     return List<Map<String, dynamic>>.from(rows);
@@ -152,12 +152,15 @@ class _BookingCard extends StatelessWidget {
     final cancelled = booking['status'] == 'cancelled';
     final label =
         cancelled
-            ? 'CANCELLED'
+            ? tr('CANCELLED', 'ملغي')
             : kind == _BookingKind.current
-            ? 'IN PROGRESS'
+            ? tr('IN PROGRESS', 'قيد التنفيذ')
             : kind == _BookingKind.upcoming
-            ? 'UPCOMING'
-            : 'COMPLETED';
+            ? tr('UPCOMING', 'قادم')
+            : tr('COMPLETED', 'مكتمل');
+    final court = booking['arena_courts'] as Map<String, dynamic>?;
+    final courtNumber = court?['court_number'];
+    final waterCartons = booking['water_cartons'] as int? ?? 0;
     final color =
         cancelled
             ? const Color(0xFF000000)
@@ -215,6 +218,22 @@ class _BookingCard extends StatelessWidget {
               '${_date(start)} · ${_time(start)} – ${_time(end)}',
               style: const TextStyle(color: Color(0x99000000)),
             ),
+            if (courtNumber != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                tr('Court $courtNumber', 'الملعب رقم $courtNumber'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+            if (waterCartons > 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                tr(
+                  '$waterCartons water carton(s)',
+                  '$waterCartons كرتون ماء',
+                ),
+              ),
+            ],
             const Divider(height: 25),
             Align(
               alignment: Alignment.centerRight,
@@ -235,7 +254,7 @@ class _BookingCard extends StatelessWidget {
 
 String _time(DateTime value) {
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? 'PM' : 'AM';
+  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
   return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
 }
 
