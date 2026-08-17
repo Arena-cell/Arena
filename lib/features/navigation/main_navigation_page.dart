@@ -175,16 +175,16 @@ class _PlayOnBottomNavigationBar extends StatelessWidget {
                     final left =
                         physicalPage * segmentWidth +
                         (segmentWidth - activeWidth) / 2;
-                    final labelIndex = logicalPage
-                        .round()
-                        .clamp(0, items.length - 1)
-                        .toInt();
+                    final labelIndex =
+                        logicalPage.round().clamp(0, items.length - 1).toInt();
                     return Stack(
                       clipBehavior: Clip.none,
                       alignment: Alignment.centerLeft,
                       children: [
                         Row(
-                          children: List<Widget>.generate(items.length, (index) {
+                          children: List<Widget>.generate(items.length, (
+                            index,
+                          ) {
                             return Expanded(
                               child: _NavigationIconButton(
                                 item: items[index],

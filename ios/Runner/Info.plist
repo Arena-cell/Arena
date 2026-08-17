@@ -52,6 +52,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>PlayOn uses your location to show nearby fields.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

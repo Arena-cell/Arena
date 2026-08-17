@@ -3,9 +3,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/oman_time.dart';
 import '../../bookings/pages/my_bookings_page.dart';
 import '../../explore/pages/production_arena_details_page.dart';
 import '../../games/pages/match_details_page.dart';
+import '../../../shared/widgets/arena_empty_state.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -95,9 +97,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
         }
         final notifications = snapshot.data ?? const [];
         if (notifications.isEmpty) {
-          return _NotificationState(
+          return ArenaEmptyState(
             icon: Icons.notifications_none_rounded,
             title: tr('No notifications yet', 'لا توجد إشعارات حتى الآن'),
+            message: tr(
+              'Booking, game, message, and rewards updates will appear here.',
+              'ستظهر هنا تحديثات الحجوزات والمباريات والرسائل والمكافآت.',
+            ),
           );
         }
         return RefreshIndicator(
@@ -108,12 +114,22 @@ class _NotificationsPageState extends State<NotificationsPage> {
             separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
               final item = notifications[index];
-              final arabic = context.isArabic;
-              final localizedBody =
-                  '${item[arabic ? 'body_ar' : 'body_en'] ?? item['body'] ?? ''}';
+              final localizedTitle = localizedData(
+                item,
+                'title',
+                englishFallback: 'Arena notification',
+                arabicFallback: 'إشعار من أرينا',
+              );
+              final localizedBody = localizedData(
+                item,
+                'body',
+                englishFallback: 'Open to view the latest update.',
+                arabicFallback: 'افتح الإشعار لعرض آخر تحديث.',
+              );
               final unread = item['read_at'] == null;
-              final createdAt =
-                  DateTime.tryParse('${item['created_at'] ?? ''}')?.toLocal();
+              final createdAt = DateTime.tryParse(
+                '${item['created_at'] ?? ''}',
+              );
               return ListTile(
                 tileColor: unread ? const Color(0x140D2946) : Colors.white,
                 shape: RoundedRectangleBorder(
@@ -122,7 +138,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 ),
                 leading: Icon(_notificationIcon('${item['type']}')),
                 title: Text(
-                  '${item[arabic ? 'title_ar' : 'title_en'] ?? item['title'] ?? ''}',
+                  localizedTitle,
                   style: TextStyle(
                     fontWeight: unread ? FontWeight.w800 : FontWeight.w600,
                   ),
@@ -152,7 +168,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
 }
 
 class _NotificationState extends StatelessWidget {
-  const _NotificationState({required this.icon, required this.title, this.action});
+  const _NotificationState({
+    required this.icon,
+    required this.title,
+    this.action,
+  });
   final IconData icon;
   final String title;
   final VoidCallback? action;
@@ -187,7 +207,5 @@ IconData _notificationIcon(String type) => switch (type) {
 };
 
 String _time(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(value);
 }

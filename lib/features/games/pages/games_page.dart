@@ -8,6 +8,7 @@ import '../../../core/services/production_repository.dart';
 import '../../../core/services/guest_session.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/oman_time.dart';
 import '../../explore/pages/game_filters_sheet.dart';
 import 'create_game_page.dart';
 import 'match_details_page.dart';
@@ -32,7 +33,7 @@ class _GamesPageState extends State<GamesPage> {
   @override
   void initState() {
     super.initState();
-    _today = DateUtils.dateOnly(DateTime.now());
+    _today = DateUtils.dateOnly(toOmanTime(DateTime.now()));
     _selectedDate = _today;
     _matches = _loadMatches();
     _matchesChannel =
@@ -52,8 +53,9 @@ class _GamesPageState extends State<GamesPage> {
   @override
   void dispose() {
     _dayTimer?.cancel();
-    if (_matchesChannel != null) {
-      ProductionRepository.client.removeChannel(_matchesChannel!);
+    final channel = _matchesChannel;
+    if (channel != null) {
+      ProductionRepository.client.removeChannel(channel);
     }
     _searchController.dispose();
     super.dispose();
@@ -86,14 +88,19 @@ class _GamesPageState extends State<GamesPage> {
 
   void _scheduleDateRefresh() {
     _dayTimer?.cancel();
-    final now = DateTime.now();
-    final midnight = DateTime(now.year, now.month, now.day + 1);
+    final now = DateTime.now().toUtc();
+    final omanNow = toOmanTime(now);
+    final midnight = DateTime.utc(
+      omanNow.year,
+      omanNow.month,
+      omanNow.day + 1,
+    ).subtract(const Duration(hours: 4));
     _dayTimer = Timer(
       midnight.difference(now) + const Duration(seconds: 1),
       () {
         if (!mounted) return;
         setState(() {
-          _today = DateUtils.dateOnly(DateTime.now());
+          _today = DateUtils.dateOnly(toOmanTime(DateTime.now()));
           if (_selectedDate.isBefore(_today)) _selectedDate = _today;
           _matches = _loadMatches();
         });
@@ -105,8 +112,10 @@ class _GamesPageState extends State<GamesPage> {
   List<Map<String, dynamic>> _filtered(List<Map<String, dynamic>> matches) {
     final query = _searchController.text.trim().toLowerCase();
     return matches.where((match) {
-      final startsAt =
-          DateTime.tryParse(match['starts_at'] as String? ?? '')?.toLocal();
+      final parsedStart = DateTime.tryParse(
+        match['starts_at'] as String? ?? '',
+      );
+      final startsAt = parsedStart == null ? null : toOmanTime(parsedStart);
       if (startsAt == null || !DateUtils.isSameDay(startsAt, _selectedDate)) {
         return false;
       }
@@ -460,12 +469,14 @@ class _GameCard extends StatelessWidget {
             .where((player) => player is Map && player['status'] == 'joined')
             .length;
     final maxPlayers = (match['max_players'] as num?)?.toInt() ?? 0;
-    final startsAt = DateTime.parse(match['starts_at'] as String).toLocal();
+    final startsAt = DateTime.parse(match['starts_at'] as String);
     final sport = '${match['sport'] ?? ''}'.trim();
     final isPadel = sport.toLowerCase() == 'padel' || sport == 'بادل';
     final accent = isPadel ? AppColors.navy : AppColors.brandGreenMedium;
     final surface = isPadel ? const Color(0xFFF0F5FA) : const Color(0xFFF3F8E8);
-    final host = '${profile['username'] ?? 'host'}'.trim();
+    final host =
+        '${profile['first_name'] ?? profile['display_name'] ?? tr('Host', 'المضيف')}'
+            .trim();
     final price = match['price_per_player'] as num? ?? 0;
     final id = match['id']?.toString().trim() ?? '';
     final avatarUrl = profile['avatar_url'] as String?;
@@ -554,7 +565,7 @@ class _GameCard extends StatelessWidget {
                     const SizedBox(width: 7),
                     Expanded(
                       child: Text(
-                        '${_gameFormat(match)} ${tr('By', 'بواسطة')} @$host',
+                        '${_gameFormat(match)} ${tr('By', 'بواسطة')} $host',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -622,19 +633,22 @@ class _HostAvatar extends StatelessWidget {
   const _HostAvatar({this.url});
   final String? url;
   @override
-  Widget build(BuildContext context) => CircleAvatar(
-    radius: 11,
-    backgroundColor: const Color(0xFF000000),
-    backgroundImage: url == null || url!.isEmpty ? null : NetworkImage(url!),
-    child:
-        url == null || url!.isEmpty
-            ? const Icon(
-              Icons.person_rounded,
-              size: 13,
-              color: Color(0xFFFFFDF8),
-            )
-            : null,
-  );
+  Widget build(BuildContext context) {
+    final imageUrl = url?.trim() ?? '';
+    return CircleAvatar(
+      radius: 11,
+      backgroundColor: const Color(0xFF000000),
+      backgroundImage: imageUrl.isEmpty ? null : NetworkImage(imageUrl),
+      child:
+          imageUrl.isEmpty
+              ? const Icon(
+                Icons.person_rounded,
+                size: 13,
+                color: Color(0xFFFFFDF8),
+              )
+              : null,
+    );
+  }
 }
 
 class _Tag extends StatelessWidget {
@@ -726,9 +740,7 @@ String _gameFormat(Map<String, dynamic> match) {
 }
 
 String _time(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(value);
 }
 
 String _weekday(int weekday) =>

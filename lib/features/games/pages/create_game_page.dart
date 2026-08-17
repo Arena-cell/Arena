@@ -374,9 +374,17 @@ class _CreateGamePageState extends State<CreateGamePage> {
       Navigator.of(context).pop(_start);
     } on PostgrestException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              localizedBackendError(
+                error.message,
+                englishFallback: 'Could not create the match.',
+                arabicFallback: 'تعذر إنشاء المباراة.',
+              ),
+            ),
+          ),
+        );
       }
     } catch (error) {
       if (mounted) {

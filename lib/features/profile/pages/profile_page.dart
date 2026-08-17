@@ -6,6 +6,7 @@ import '../../bookings/pages/my_bookings_page.dart';
 
 import '../../authentication/pages/login_page.dart';
 import '../../../core/services/guest_session.dart';
+import '../../../core/services/push_notification_service.dart';
 import 'edit_profile_page.dart';
 import 'rewards_page.dart';
 
@@ -40,6 +41,8 @@ class ProfilePage extends StatelessWidget {
           ),
     );
     if (approved != true) return;
+    await PushNotificationService.instance.deactivateCurrentToken();
+    if (!context.mounted) return;
     await Supabase.instance.client.auth.signOut();
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -234,11 +237,19 @@ class ProfilePage extends StatelessWidget {
           ),
         ),
       );
-    } on AuthException catch (e) {
+    } on AuthException catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              localizedBackendError(
+                error.message,
+                englishFallback: 'Could not update your profile.',
+                arabicFallback: 'تعذر تحديث ملفك الشخصي.',
+              ),
+            ),
+          ),
+        );
       }
     }
   }
@@ -745,7 +756,7 @@ class _SwitchItem extends StatelessWidget {
       SwitchListTile(
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         value: value,
-        activeThumbColor: _green,
+        activeColor: _green,
         onChanged: onChanged,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),

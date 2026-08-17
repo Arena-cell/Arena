@@ -8,6 +8,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/arena_typography.dart';
 import 'core/constants/supabase.dart';
+import 'core/services/push_notification_service.dart';
 
 import 'splash_page.dart';
 import 'features/authentication/pages/login_page.dart';
@@ -20,9 +21,11 @@ Future<void> main() async {
   appLanguage.value = preferences.getString('app_language') ?? 'en';
 
   runApp(const ArenaReservationApp());
+  unawaited(PushNotificationService.instance.initialize(appNavigatorKey));
 }
 
 final appLanguage = ValueNotifier<String>('en');
+final appNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> setAppLanguage(String language) async {
   appLanguage.value = language;
@@ -38,7 +41,6 @@ class ArenaReservationApp extends StatefulWidget {
 }
 
 class _ArenaReservationAppState extends State<ArenaReservationApp> {
-  final _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<AuthState>? _authSubscription;
 
   @override
@@ -48,7 +50,7 @@ class _ArenaReservationAppState extends State<ArenaReservationApp> {
       state,
     ) {
       if (state.event == AuthChangeEvent.passwordRecovery) {
-        _navigatorKey.currentState?.pushAndRemoveUntil(
+        appNavigatorKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const ResetPasswordPage()),
           (_) => false,
         );
@@ -70,7 +72,7 @@ class _ArenaReservationAppState extends State<ArenaReservationApp> {
           (context, language, _) => MaterialApp(
             title: language == 'ar' ? 'أرينا' : 'Arena',
 
-            navigatorKey: _navigatorKey,
+            navigatorKey: appNavigatorKey,
 
             debugShowCheckedModeBanner: false,
 
@@ -86,7 +88,7 @@ class _ArenaReservationAppState extends State<ArenaReservationApp> {
                 (context, child) => Directionality(
                   textDirection:
                       language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
-                  child: child!,
+                  child: child ?? const SizedBox.shrink(),
                 ),
 
             home: const SplashPage(),

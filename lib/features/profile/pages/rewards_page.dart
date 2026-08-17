@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/omr_currency.dart';
 
 class RewardsPage extends StatelessWidget {
   const RewardsPage({super.key});
@@ -66,7 +67,10 @@ class RewardsPage extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  Text(tr('available points', 'نقطة متاحة'), style: const TextStyle(color: Colors.white)),
+                  Text(
+                    tr('available points', 'نقطة متاحة'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
                   const SizedBox(height: 14),
                   LinearProgressIndicator(value: (data.balance % 100) / 100),
                   const SizedBox(height: 8),
@@ -93,7 +97,13 @@ class RewardsPage extends StatelessWidget {
                 (coupon) => Card(
                   child: ListTile(
                     leading: const Icon(Icons.local_offer_outlined),
-                    title: Text(tr('OMR 1 coupon', 'كوبون بقيمة 1 ر.ع')),
+                    title: Row(
+                      children: [
+                        Text(tr('Coupon value', 'قيمة الكوبون')),
+                        const SizedBox(width: 7),
+                        const OmrPrice(value: 1),
+                      ],
+                    ),
                     subtitle: Text(_couponStatus('${coupon['status']}')),
                   ),
                 ),
@@ -106,9 +116,13 @@ class RewardsPage extends StatelessWidget {
             ...data.ledger.map((entry) {
               final points = (entry['points'] as num?)?.toInt() ?? 0;
               return ListTile(
-                leading: Icon(points >= 0 ? Icons.add_circle_outline : Icons.redeem_outlined),
+                leading: Icon(
+                  points >= 0
+                      ? Icons.add_circle_outline
+                      : Icons.redeem_outlined,
+                ),
                 title: Text(points >= 0 ? '+$points' : '$points'),
-                subtitle: Text('${entry['reason'] ?? ''}'),
+                subtitle: Text(_pointReason('${entry['reason'] ?? ''}')),
               );
             }),
           ],
@@ -119,7 +133,11 @@ class RewardsPage extends StatelessWidget {
 }
 
 class _RewardsData {
-  const _RewardsData({this.balance = 0, this.ledger = const [], this.coupons = const []});
+  const _RewardsData({
+    this.balance = 0,
+    this.ledger = const [],
+    this.coupons = const [],
+  });
   final int balance;
   final List<Map<String, dynamic>> ledger;
   final List<Map<String, dynamic>> coupons;
@@ -131,3 +149,16 @@ String _couponStatus(String status) => switch (status) {
   'expired' => tr('Expired', 'منتهي'),
   _ => status,
 };
+
+String _pointReason(String reason) {
+  if (reason == 'completed_booking') {
+    return tr('Completed booking', 'إكمال حجز');
+  }
+  if (reason == 'completed_match') {
+    return tr('Completed game', 'إكمال مباراة');
+  }
+  if (reason.startsWith('coupon_created:')) {
+    return tr('Points redeemed for coupon', 'استبدال النقاط بكوبون');
+  }
+  return tr('Points transaction', 'حركة نقاط');
+}

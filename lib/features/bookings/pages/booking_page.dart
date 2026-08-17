@@ -56,7 +56,9 @@ class _BookingPageState extends State<BookingPage> {
     _arenaLoader = ProductionRepository.arenaById(widget.arenaId);
     _loadCoupons();
     _bookingAvailabilityChannel =
-        Supabase.instance.client.channel('booking-availability-${widget.arenaId}')
+        Supabase.instance.client.channel(
+            'booking-availability-${widget.arenaId}',
+          )
           ..onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
@@ -465,7 +467,7 @@ class _BookingPageState extends State<BookingPage> {
                 const SizedBox(height: 16),
                 if (_coupons.isNotEmpty) ...[
                   DropdownButtonFormField<String?>(
-                    initialValue: _couponId,
+                    value: _couponId,
                     decoration: InputDecoration(
                       labelText: tr('Discount coupon', 'كوبون الخصم'),
                       border: OutlineInputBorder(
@@ -480,12 +482,21 @@ class _BookingPageState extends State<BookingPage> {
                       ..._coupons.map(
                         (coupon) => DropdownMenuItem<String?>(
                           value: coupon['id'] as String,
-                          child: Text(tr('OMR 1 coupon', 'كوبون 1 ر.ع')),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(tr('Coupon', 'كوبون')),
+                              const SizedBox(width: 6),
+                              const OmrPrice(value: 1),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                     onChanged:
-                        _saving ? null : (value) => setState(() => _couponId = value),
+                        _saving
+                            ? null
+                            : (value) => setState(() => _couponId = value),
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -499,7 +510,10 @@ class _BookingPageState extends State<BookingPage> {
                 if (_waterCartons > 0 || _couponId != null) ...[
                   const SizedBox(height: 10),
                   _BookingTotal(
-                    total: _couponId == null ? _total : (_total - 1).clamp(0, double.infinity),
+                    total:
+                        _couponId == null
+                            ? _total
+                            : (_total - 1).clamp(0, double.infinity),
                   ),
                 ],
                 const SizedBox(height: 18),
@@ -1114,6 +1128,12 @@ String _bookingError(String message) {
       'هذا الملعب غير متاح للجنس المحدد في ملفك الشخصي.',
     );
   }
+  if (normalized.contains('arena_closed_for_range')) {
+    return tr(
+      'The arena is closed during part of the selected time.',
+      'الملعب مغلق خلال جزء من الوقت المختار.',
+    );
+  }
   return tr(
     'Could not save the booking. Please choose another time and try again.',
     'تعذر حفظ الحجز. اختر وقتًا آخر ثم حاول مجددًا.',
@@ -1151,18 +1171,18 @@ class _WaterCartonSelector extends StatelessWidget {
                 tr('Add water cartons?', 'هل تريد إضافة ماء؟'),
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
-              Text(
-                tr('OMR 0.500 per carton', '0.500 ر.ع لكل كرتون'),
+              OmrPrice(
+                value: 0.5,
+                suffix: tr('per carton', 'لكل كرتون'),
                 style: const TextStyle(color: Color(0x99000000), fontSize: 12),
+                symbolSize: 14,
               ),
             ],
           ),
         ),
         IconButton(
           onPressed:
-              quantity == 0 || onChanged == null
-                  ? null
-                  : () => _changeBy(-1),
+              quantity == 0 || onChanged == null ? null : () => _changeBy(-1),
           icon: const Icon(Icons.remove_circle_outline),
         ),
         Text(

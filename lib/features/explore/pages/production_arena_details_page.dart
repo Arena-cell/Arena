@@ -338,7 +338,7 @@ class _GoogleMapsLink extends StatelessWidget {
               },
       icon: const Icon(Icons.map_outlined),
       label: Text(
-        tr('Open location in Google Maps', 'فتح الموقع في خرائط Google'),
+        tr('Open location in Google Maps', 'فتح الموقع في خرائط جوجل'),
       ),
       style: OutlinedButton.styleFrom(
         minimumSize: const Size.fromHeight(52),
@@ -481,12 +481,19 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
     final client = ProductionRepository.client;
     final reviewRows = await client
         .from('reviews')
-        .select('id,booking_id,rating,comment,created_at,user_id')
+        .select(
+          'id,booking_id,rating,comment,created_at,user_id,moderation_status',
+        )
         .eq('arena_id', widget.arenaId)
+        .neq('moderation_status', 'hidden')
         .order('created_at', ascending: false);
     final reviews = List<Map<String, dynamic>>.from(reviewRows);
     final reviewerIds =
-        reviews.map((row) => row['user_id'] as String?).whereType<String>().toSet().toList();
+        reviews
+            .map((row) => row['user_id'] as String?)
+            .whereType<String>()
+            .toSet()
+            .toList();
     if (reviewerIds.isNotEmpty) {
       final profileRows = await client
           .from('profiles')
@@ -497,7 +504,8 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
           profile['id'] as String: profile,
       };
       for (final review in reviews) {
-        review['profiles'] = profiles[review['user_id']] ?? const <String, dynamic>{};
+        review['profiles'] =
+            profiles[review['user_id']] ?? const <String, dynamic>{};
       }
     }
     final userId = client.auth.currentUser?.id;
@@ -513,10 +521,11 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
             .eq('status', 'previous')
             .lte('ends_at', DateTime.now().toUtc().toIso8601String())
             .order('ends_at', ascending: false);
-        final reviewedBookingIds = reviews
-            .map((review) => review['booking_id'] as String?)
-            .whereType<String>()
-            .toSet();
+        final reviewedBookingIds =
+            reviews
+                .map((review) => review['booking_id'] as String?)
+                .whereType<String>()
+                .toSet();
         for (final booking in List<Map<String, dynamic>>.from(bookingRows)) {
           final bookingId = booking['id'] as String?;
           if (bookingId != null && !reviewedBookingIds.contains(bookingId)) {
@@ -528,10 +537,7 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
         eligibleBookingId = null;
       }
     }
-    return _ReviewData(
-      reviews: reviews,
-      eligibleBookingId: eligibleBookingId,
-    );
+    return _ReviewData(reviews: reviews, eligibleBookingId: eligibleBookingId);
   }
 
   Future<void> _addReview(String bookingId) async {
@@ -552,9 +558,12 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
                         children: List.generate(
                           5,
                           (index) => IconButton(
-                            onPressed: () => setDialogState(() => rating = index + 1),
+                            onPressed:
+                                () => setDialogState(() => rating = index + 1),
                             icon: Icon(
-                              index < rating ? Icons.star_rounded : Icons.star_border_rounded,
+                              index < rating
+                                  ? Icons.star_rounded
+                                  : Icons.star_border_rounded,
                               color: AppColors.navy,
                             ),
                           ),
@@ -565,7 +574,10 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
                         maxLength: 1000,
                         maxLines: 4,
                         decoration: InputDecoration(
-                          hintText: tr('Write your experience (optional)', 'اكتب تجربتك (اختياري)'),
+                          hintText: tr(
+                            'Write your experience (optional)',
+                            'اكتب تجربتك (اختياري)',
+                          ),
                         ),
                       ),
                     ],
@@ -599,7 +611,17 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
       if (mounted) setState(() => _loader = _load());
     } on PostgrestException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              localizedBackendError(
+                error.message,
+                englishFallback: 'Could not submit your review.',
+                arabicFallback: 'تعذر إرسال تقييمك.',
+              ),
+            ),
+          ),
+        );
       }
     } finally {
       comment.dispose();
@@ -622,13 +644,15 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
               Expanded(
                 child: Text(
                   tr('Player reviews', 'تقييمات اللاعبين'),
-                  style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900),
+                  style: const TextStyle(
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
               if (data.eligibleBookingId != null)
                 TextButton.icon(
-                  onPressed:
-                      () => _addReview(data.eligibleBookingId as String),
+                  onPressed: () => _addReview(data.eligibleBookingId as String),
                   icon: const Icon(Icons.star_outline_rounded),
                   label: Text(tr('Rate', 'قيّم')),
                 ),
@@ -638,24 +662,31 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
             Text(tr('No reviews yet.', 'لا توجد تقييمات حتى الآن.'))
           else
             ...data.reviews.map((review) {
-              final profile = review['profiles'] as Map<String, dynamic>? ?? const {};
-              final firstName = '${profile['first_name'] ?? profile['display_name'] ?? tr('Player', 'لاعب')}'
-                  .trim()
-                  .split(RegExp(r'\s+'))
-                  .first;
+              final profile =
+                  review['profiles'] as Map<String, dynamic>? ?? const {};
+              final firstName =
+                  '${profile['first_name'] ?? profile['display_name'] ?? tr('Player', 'لاعب')}'
+                      .trim()
+                      .split(RegExp(r'\s+'))
+                      .first;
               final avatar = profile['avatar_url'] as String?;
               return ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: CircleAvatar(
                   backgroundImage: avatar == null ? null : NetworkImage(avatar),
-                  child: avatar == null ? const Icon(Icons.person_outline) : null,
+                  child:
+                      avatar == null ? const Icon(Icons.person_outline) : null,
                 ),
                 title: Text(firstName),
                 subtitle: Text('${review['comment'] ?? ''}'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.star_rounded, color: AppColors.navy, size: 18),
+                    const Icon(
+                      Icons.star_rounded,
+                      color: AppColors.navy,
+                      size: 18,
+                    ),
                     Text('${review['rating']}'),
                   ],
                 ),
