@@ -163,11 +163,13 @@ class _SignInPageState extends State<SignInPage> {
         }
         return;
       }
+      final signedInUser = response.user;
+      if (signedInUser == null) return;
       final profile =
           await Supabase.instance.client
               .from('profiles')
               .select('onboarding_complete')
-              .eq('id', response.user!.id)
+              .eq('id', signedInUser.id)
               .maybeSingle();
       if (!mounted) return;
       final preferences = await SharedPreferences.getInstance();
@@ -237,7 +239,7 @@ class _SignInPageState extends State<SignInPage> {
             ),
           ),
         ),
-        if (_error != null) _ErrorText(_error!),
+        if (_error != null) _ErrorText(_error as String),
         const SizedBox(height: 12),
         _FilledAction(
           label:
@@ -372,7 +374,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          _ErrorText(_error!),
+          _ErrorText(_error as String),
         ],
         const SizedBox(height: 20),
         _FilledAction(
@@ -395,6 +397,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
   final _lastName = TextEditingController();
   bool _loading = false;
   bool _obscurePassword = true;
+  String? _gender;
   String? _error;
 
   @override
@@ -418,6 +421,16 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
             _error = tr(
               'Please complete all fields.',
               'يرجى تعبئة جميع الحقول.',
+            ),
+      );
+      return;
+    }
+    if (_gender == null) {
+      setState(
+        () =>
+            _error = tr(
+              'Choose your gender to show eligible arenas and games.',
+              'اختر الجنس لعرض الملاعب والحجوزات المناسبة لك.',
             ),
       );
       return;
@@ -474,10 +487,11 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
           'username': username,
           'first_name': _firstName.text.trim(),
           'last_name': _lastName.text.trim(),
+          'gender': _gender,
         },
       );
-      if (response.user == null ||
-          (response.user!.identities?.isEmpty ?? false)) {
+      final createdUser = response.user;
+      if (createdUser == null || (createdUser.identities?.isEmpty ?? false)) {
         if (mounted) {
           setState(
             () =>
@@ -554,9 +568,51 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
           hint: tr('Last name', 'اسم العائلة'),
           icon: Icons.person_outline,
         ),
+        const SizedBox(height: 14),
+        Text(
+          tr('Gender', 'الجنس'),
+          style: const TextStyle(
+            color: _ink,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: [
+            ButtonSegment<String>(
+              value: 'men',
+              icon: const Icon(Icons.male_rounded),
+              label: Text(tr('Men', 'رجال')),
+            ),
+            ButtonSegment<String>(
+              value: 'women',
+              icon: const Icon(Icons.female_rounded),
+              label: Text(tr('Women', 'نساء')),
+            ),
+          ],
+          selected:
+              _gender == null
+                  ? const <String>{}
+                  : <String>{_gender as String},
+          emptySelectionAllowed: true,
+          showSelectedIcon: true,
+          onSelectionChanged:
+              _loading
+                  ? null
+                  : (selection) => setState(
+                    () => _gender = selection.isEmpty ? null : selection.first,
+                  ),
+          style: ButtonStyle(
+            visualDensity: VisualDensity.comfortable,
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+        ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          _ErrorText(_error!),
+          _ErrorText(_error as String),
         ],
         const SizedBox(height: 20),
         _FilledAction(

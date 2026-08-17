@@ -144,7 +144,7 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                       child: const Icon(
                         Icons.sports_soccer_rounded,
                         size: 112,
-                        color: AppColors.purple,
+                        color: AppColors.navy,
                       ),
                     ),
                     const SizedBox(height: 34),
@@ -165,7 +165,7 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                       ),
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: AppColors.purple,
+                        color: AppColors.navy,
                         fontSize: 38,
                         height: 1.05,
                         fontWeight: FontWeight.w900,
@@ -188,8 +188,8 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                     FilledButton(
                       onPressed: _loading ? null : _allow,
                       style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.success,
-                        foregroundColor: AppColors.arenaBlack,
+                        backgroundColor: AppColors.navy,
+                        foregroundColor: AppColors.warmWhite,
                       ),
                       child:
                           _loading

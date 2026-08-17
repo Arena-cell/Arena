@@ -5,13 +5,13 @@ alter table public.matches
   add column if not exists is_private boolean not null default false;
 
 alter table public.arenas
-  add column if not exists audience_gender text not null default 'mixed'
-    check (audience_gender in ('men', 'women', 'mixed'));
+  add column if not exists audience_gender text not null default 'men'
+    check (audience_gender in ('men', 'women'));
 
 comment on column public.arenas.sports is
   'Admin-managed sport types, for example {football} or {padel}.';
 comment on column public.arenas.audience_gender is
-  'Admin-managed audience: men, women, or mixed.';
+  'Admin-managed audience: men or women only.';
 
 drop policy if exists "arenas are readable" on public.arenas;
 drop policy if exists "public arenas are readable" on public.arenas;

@@ -304,7 +304,7 @@ class _ArenaCard extends StatelessWidget {
     );
     final sportAccent = isPadel ? AppColors.navy : AppColors.brandGreenMedium;
     final surface = isPadel ? const Color(0xFFF1F6FA) : const Color(0xFFF4F8EA);
-    final audience = '${arena['audience_gender'] ?? 'mixed'}'.toLowerCase();
+    final audience = '${arena['audience_gender'] ?? ''}'.toLowerCase();
     final price = arena['price_per_hour'] as num? ?? 0;
     final rating = arena['rating'] as num?;
 
@@ -474,24 +474,14 @@ class _AudienceBadge extends StatelessWidget {
     final women =
         audience == 'women' || audience == 'female' || audience == 'نساء';
     final men = audience == 'men' || audience == 'male' || audience == 'رجال';
-    final color =
-        women
-            ? const Color(0xFF9C4771)
-            : men
-            ? AppColors.navy
-            : const Color(0xFF61706A);
-    final icon =
-        women
-            ? Icons.female_rounded
-            : men
-            ? Icons.male_rounded
-            : Icons.groups_2_outlined;
+    final color = women ? const Color(0xFF9C4771) : AppColors.navy;
+    final icon = women ? Icons.female_rounded : Icons.male_rounded;
     final label =
         women
             ? tr('Women', 'نسائي')
             : men
             ? tr('Men', 'رجالي')
-            : tr('Mixed', 'مشترك');
+            : tr('Classification required', 'يلزم تحديد التصنيف');
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -572,7 +562,10 @@ class _ArenaState extends StatelessWidget {
           ),
           if (actionLabel != null && onAction != null) ...[
             const SizedBox(height: 16),
-            OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
+            OutlinedButton(
+              onPressed: onAction,
+              child: Text(actionLabel as String),
+            ),
           ],
         ],
       ),

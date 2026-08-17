@@ -7,6 +7,7 @@ import '../../../core/services/production_repository.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/booking_slot_selection.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/request_id.dart';
 import '../../../shared/widgets/arena_schedule_picker.dart';
 
 class CreateGamePage extends StatefulWidget {
@@ -35,6 +36,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
   String _gender = 'Men';
   bool _showJoinedPlayers = true;
   bool _saving = false;
+  late final String _requestId;
   late DateTime _visibleMonth;
   DateTime? _selectedScheduleDate;
   List<DateTime> _selectedScheduleSlots = [];
@@ -49,6 +51,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
     _end = _start.add(const Duration(hours: 1));
     _visibleMonth = DateTime(_start.year, _start.month);
     _arenas = ProductionRepository.arenas(sport: widget.sport);
+    _requestId = newRequestId();
   }
 
   @override
@@ -77,6 +80,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
       _selectedScheduleDate = DateUtils.dateOnly(first);
       _selectedScheduleSlots = [first];
       _visibleMonth = DateTime(first.year, first.month);
+      _gender = arena['audience_gender'] == 'women' ? 'Women' : 'Men';
     });
     _loadScheduleAvailability();
   }
@@ -348,42 +352,26 @@ class _CreateGamePageState extends State<CreateGamePage> {
         );
         return;
       }
-      final baseMatch = <String, dynamic>{
-        'arena_id': arena['id'],
-        'host_id': userId,
-        'name': _name.text.trim(),
-        'description': _description.text.trim(),
-        'rules': _rules.text.trim(),
-        'sport': widget.sport,
-        'starts_at': _start.toUtc().toIso8601String(),
-        'ends_at': _end.toUtc().toIso8601String(),
-        'max_players': _maxPlayers,
-        'price_per_player': _price,
-      };
-      final match =
-          await Supabase.instance.client
-              .from('matches')
-              .insert({
-                ...baseMatch,
-                'gender': _gender.toLowerCase(),
-                'payment_method':
-                    _payment.toLowerCase() == 'cash' ? 'cash' : 'card',
-                'show_joined_players': _showJoinedPlayers,
-                'is_private': _private,
-              })
-              .select('id')
-              .single();
-      // The host manages their own membership under the existing RLS policy.
-      // This avoids the legacy join_match RPC whose SQL is ambiguous in the
-      // currently deployed database.
-      await Supabase.instance.client.from('match_players').upsert({
-        'match_id': match['id'],
-        'user_id': userId,
-        'status': 'joined',
-      });
-      if (mounted) {
-        Navigator.of(context).pop(_start);
-      }
+      await Supabase.instance.client.rpc(
+        'create_arena_match',
+        params: {
+          'p_arena_id': arena['id'],
+          'p_name': _name.text.trim(),
+          'p_description': _description.text.trim(),
+          'p_rules': _rules.text.trim(),
+          'p_sport': widget.sport,
+          'p_starts_at': _start.toUtc().toIso8601String(),
+          'p_ends_at': _end.toUtc().toIso8601String(),
+          'p_max_players': _maxPlayers,
+          'p_is_private': _private,
+          'p_show_joined_players': _showJoinedPlayers,
+          'p_payment_method':
+              _payment.toLowerCase() == 'cash' ? 'cash' : 'card',
+          'p_idempotency_key': _requestId,
+        },
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(_start);
     } on PostgrestException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -519,7 +507,6 @@ class _CreateGamePageState extends State<CreateGamePage> {
       onMax: (value) => setState(() => _maxPlayers = value),
       onPrivate: (value) => setState(() => _private = value),
       onIndoor: (value) => setState(() => _indoor = value),
-      onGender: (value) => setState(() => _gender = value),
       onShowJoinedPlayers:
           (value) => setState(() => _showJoinedPlayers = value),
     ),
@@ -763,7 +750,6 @@ class _SettingsStep extends StatelessWidget {
     required this.onMax,
     required this.onPrivate,
     required this.onIndoor,
-    required this.onGender,
     required this.onShowJoinedPlayers,
   });
   final TextEditingController name, description, rules;
@@ -773,7 +759,6 @@ class _SettingsStep extends StatelessWidget {
   final bool showJoinedPlayers;
   final ValueChanged<int> onMax;
   final ValueChanged<bool> onPrivate, onIndoor;
-  final ValueChanged<String> onGender;
   final ValueChanged<bool> onShowJoinedPlayers;
   @override
   Widget build(BuildContext context) => ListView(
@@ -856,30 +841,24 @@ class _SettingsStep extends StatelessWidget {
         ),
       ),
       Text(
-        tr('Gender options', 'خيارات الجنس'),
+        tr('Game gender', 'جنس المباراة'),
         style: const TextStyle(color: Color(0x99000000)),
       ),
-      Row(
-        children:
-            ['Men', 'Women']
-                .map(
-                  (value) => Expanded(
-                    child: RadioListTile<String>(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        value == 'Men'
-                            ? tr('Men', 'رجال')
-                            : tr('Women', 'نساء'),
-                      ),
-                      value: value,
-                      groupValue: gender,
-                      onChanged: (choice) {
-                        if (choice != null) onGender(choice);
-                      },
-                    ),
-                  ),
-                )
-                .toList(),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          gender == 'Women' ? Icons.female_rounded : Icons.male_rounded,
+          color: AppColors.navy,
+        ),
+        title: Text(
+          gender == 'Women' ? tr('Women', 'نساء') : tr('Men', 'رجال'),
+        ),
+        subtitle: Text(
+          tr(
+            'Matches use the arena and account gender automatically.',
+            'يُحدد جنس المباراة تلقائيًا حسب الملعب والحساب.',
+          ),
+        ),
       ),
     ],
   );
@@ -916,7 +895,12 @@ class _PaymentStep extends StatelessWidget {
                             : tr('Visa', 'بطاقة مصرفية'),
                       ),
                       value: item,
+                      // RadioGroup is unavailable on older supported Flutter
+                      // versions; keep the compatible API until the minimum
+                      // SDK is raised.
+                      // ignore: deprecated_member_use
                       groupValue: value,
+                      // ignore: deprecated_member_use
                       onChanged: (choice) {
                         if (choice != null) onChanged(choice);
                       },

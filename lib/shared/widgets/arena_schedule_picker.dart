@@ -352,7 +352,7 @@ class _ScheduleTimeBox extends StatelessWidget {
   Widget build(BuildContext context) {
     final time = MaterialLocalizations.of(context).formatTimeOfDay(
       TimeOfDay.fromDateTime(slot),
-      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+      alwaysUse24HourFormat: false,
     );
     return Material(
       color:
@@ -448,7 +448,7 @@ class _ScheduleSummary extends StatelessWidget {
     String time(DateTime value) =>
         MaterialLocalizations.of(context).formatTimeOfDay(
           TimeOfDay.fromDateTime(value),
-          alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+          alwaysUse24HourFormat: false,
         );
     final end = slots.last.add(const Duration(hours: 1));
     final duration =

@@ -19,6 +19,26 @@ class ProductionRepository {
     // not present in every deployed database. Keeping the public catalogue
     // query compatible prevents the whole Explore page from failing there.
     var query = client.from('arenas').select();
+    final user = client.auth.currentUser;
+    String? profileGender;
+    if (user != null) {
+      try {
+        final profile = await client
+            .from('profiles')
+            .select('gender')
+            .eq('id', user.id)
+            .maybeSingle();
+        final value = '${profile?['gender'] ?? ''}'.toLowerCase();
+        if (value == 'men' || value == 'women') profileGender = value;
+      } on PostgrestException {
+        // Older deployments may not have the gender migration yet. The
+        // database RPC still enforces eligibility before a booking is saved.
+      }
+    }
+    query =
+        profileGender == null
+            ? query.inFilter('audience_gender', const ['men', 'women'])
+            : query.eq('audience_gender', profileGender);
     final normalizedSearch = search.trim();
     if (normalizedSearch.isNotEmpty) {
       query = query.or(
@@ -44,8 +64,9 @@ class ProductionRepository {
     return arenas
         .where((arena) {
           final sports = (arena['sports'] as List?) ?? const [];
-          return sports.isEmpty ||
-              sports.any((value) => _normalizedSport('$value') == requested);
+          return sports.any(
+            (value) => _normalizedSport('$value') == requested,
+          );
         })
         .skip(offset)
         .take(limit)
@@ -63,7 +84,20 @@ class ProductionRepository {
   }
 
   static Future<Map<String, dynamic>> arenaById(String arenaId) async {
-    final row = await client.from('arenas').select().eq('id', arenaId).single();
+    var query = client.from('arenas').select().eq('id', arenaId);
+    final userId = client.auth.currentUser?.id;
+    if (userId != null) {
+      final profile = await client
+          .from('profiles')
+          .select('gender')
+          .eq('id', userId)
+          .maybeSingle();
+      final gender = profile?['gender'] as String?;
+      if (gender == 'men' || gender == 'women') {
+        query = query.eq('audience_gender', gender ?? '');
+      }
+    }
+    final row = await query.single();
     return Map<String, dynamic>.from(row);
   }
 
@@ -88,6 +122,32 @@ class ProductionRepository {
     }).toList();
   }
 
+  static Future<Map<String, dynamic>> createArenaBooking({
+    required String arenaId,
+    required DateTime startsAt,
+    required DateTime endsAt,
+    required int waterCartons,
+    required String idempotencyKey,
+    String? couponId,
+  }) async {
+    final result = await client.rpc(
+      'create_arena_booking_with_coupon',
+      params: {
+        'p_arena_id': arenaId,
+        'p_starts_at': startsAt.toUtc().toIso8601String(),
+        'p_ends_at': endsAt.toUtc().toIso8601String(),
+        'p_water_cartons': waterCartons,
+        'p_idempotency_key': idempotencyKey,
+        'p_coupon_id': couponId,
+      },
+    );
+    final rows = List<Map<String, dynamic>>.from(result as List);
+    if (rows.isEmpty) {
+      throw PostgrestException(message: 'BOOKING_NOT_CREATED');
+    }
+    return rows.first;
+  }
+
   static Future<List<Map<String, dynamic>>> upcomingMatches() async {
     final rows = await client
         .from('matches')
@@ -100,7 +160,8 @@ class ProductionRepository {
   static Future<List<Map<String, dynamic>>> nearbyArenas({
     int limit = 5,
   }) async {
-    final userId = client.auth.currentUser!.id;
+    final userId = client.auth.currentUser?.id;
+    if (userId == null) return [];
     final profile =
         await client
             .from('profiles')
@@ -136,7 +197,7 @@ class ProductionRepository {
     try {
       final rows = await client
           .from('profiles')
-          .select('id, username, display_name, avatar_url')
+          .select('id, username, display_name, first_name, avatar_url')
           .inFilter('id', uniqueIds);
       return {
         for (final row in List<Map<String, dynamic>>.from(rows))
@@ -169,7 +230,8 @@ class ProductionRepository {
       null;
 
   static Future<void> setFavorite(String arenaId, bool favorite) async {
-    final userId = client.auth.currentUser!.id;
+    final userId = client.auth.currentUser?.id;
+    if (userId == null) return;
     if (favorite) {
       await client.from('favorites').upsert({
         'user_id': userId,

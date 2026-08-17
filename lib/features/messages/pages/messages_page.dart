@@ -3,6 +3,8 @@ import '../../../core/localization/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../explore/pages/production_arena_details_page.dart';
+
 const _green = Color(0xFF000000);
 
 class MessagesPage extends StatefulWidget {
@@ -22,7 +24,7 @@ class _MessagesPageState extends State<MessagesPage> {
   Future<List<_Conversation>> _load() async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return [];
-    final rows =
+    final directRows =
         await Supabase.instance.client
                 .from('direct_messages')
                 .select()
@@ -31,7 +33,7 @@ class _MessagesPageState extends State<MessagesPage> {
             as List<dynamic>;
     final latest = <String, Map<String, dynamic>>{};
     final unread = <String, int>{};
-    for (final value in rows.cast<Map<String, dynamic>>()) {
+    for (final value in directRows.cast<Map<String, dynamic>>()) {
       final other =
           value['sender_id'] == userId
               ? value['receiver_id'] as String
@@ -41,28 +43,31 @@ class _MessagesPageState extends State<MessagesPage> {
         unread[other] = (unread[other] ?? 0) + 1;
       }
     }
-    if (latest.isEmpty) return [];
-    final profiles =
-        await Supabase.instance.client
-                .from('profiles')
-                .select('id, username, display_name')
-                .inFilter('id', latest.keys.toList())
-            as List<dynamic>;
+    var profiles = <dynamic>[];
+    if (latest.isNotEmpty) {
+      profiles =
+          await Supabase.instance.client
+                  .from('profiles')
+                  .select('id, username, display_name, first_name')
+                  .inFilter('id', latest.keys.toList())
+              as List<dynamic>;
+    }
     final names = {
       for (final p in profiles.cast<Map<String, dynamic>>())
         p['id'] as String:
+            p['first_name'] as String? ??
             p['display_name'] as String? ??
             p['username'] as String? ??
-            'Player',
+            tr('Player', 'لاعب'),
     };
-    return latest.entries.map((e) {
+    final conversations = latest.entries.map((e) {
       final message = e.value;
       return _Conversation(
         id: e.key,
-        name: names[e.key] ?? 'Player',
+        name: names[e.key] ?? tr('Player', 'لاعب'),
         message:
             message['image_url'] != null
-                ? 'Photo'
+                ? tr('Photo', 'صورة')
                 : message['content'] as String? ?? '',
         createdAt:
             DateTime.tryParse(message['created_at'] as String? ?? '') ??
@@ -70,6 +75,57 @@ class _MessagesPageState extends State<MessagesPage> {
         unread: unread[e.key] ?? 0,
       );
     }).toList();
+
+    try {
+      final memberships = await Supabase.instance.client
+          .from('chat_group_members')
+          .select('group_id')
+          .eq('user_id', userId);
+      final groupIds = List<Map<String, dynamic>>.from(memberships)
+          .map((row) => row['group_id'] as String?)
+          .whereType<String>()
+          .toList();
+      if (groupIds.isNotEmpty) {
+        final groups = await Supabase.instance.client
+            .from('chat_groups')
+            .select('id, name, created_at')
+            .inFilter('id', groupIds);
+        final messages = await Supabase.instance.client
+            .from('group_messages')
+            .select('group_id, content, image_url, created_at')
+            .inFilter('group_id', groupIds)
+            .order('created_at', ascending: false);
+        final latestByGroup = <String, Map<String, dynamic>>{};
+        for (final message in List<Map<String, dynamic>>.from(messages)) {
+          latestByGroup.putIfAbsent(message['group_id'] as String, () => message);
+        }
+        for (final group in List<Map<String, dynamic>>.from(groups)) {
+          final id = group['id'] as String;
+          final latestMessage = latestByGroup[id];
+          conversations.add(
+            _Conversation(
+              id: id,
+              name: '${group['name']}',
+              message:
+                  latestMessage?['image_url'] != null
+                      ? tr('Photo', 'صورة')
+                      : '${latestMessage?['content'] ?? ''}',
+              createdAt:
+                  DateTime.tryParse(
+                    '${latestMessage?['created_at'] ?? group['created_at'] ?? ''}',
+                  ) ??
+                  DateTime.now(),
+              group: true,
+            ),
+          );
+        }
+      }
+    } on PostgrestException {
+      // Group tables are introduced by arena_v2_booking_system.sql. Direct
+      // conversations remain usable until that migration is deployed.
+    }
+    conversations.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return conversations;
   }
 
   void _refresh() => setState(() => _loader = _load());
@@ -94,17 +150,46 @@ class _MessagesPageState extends State<MessagesPage> {
                   ),
                 ),
                 IconButton.outlined(
-                  onPressed: _showPeople,
+                  onPressed: _startConversation,
                   icon: const Icon(Icons.edit_square),
                 ),
               ],
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: ListTile(
+              tileColor: const Color(0x120D2946),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Color(0x240D2946)),
+              ),
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF0D2946),
+                child: Icon(Icons.auto_awesome_rounded, color: Colors.white),
+              ),
+              title: Text(
+                tr('Arena Assistant', 'مساعد Arena'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                tr(
+                  'Search live arena availability',
+                  'ابحث عن الملاعب المتاحة مباشرة',
+                ),
+              ),
+              onTap:
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const _ArenaAssistantPage()),
+                  ),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
             child: TextField(
               readOnly: true,
-              onTap: _showPeople,
+              onTap: _startConversation,
               decoration: InputDecoration(
                 hintText: tr('Search conversations', 'ابحث في المحادثات'),
                 prefixIcon: const Icon(Icons.search_rounded),
@@ -160,6 +245,47 @@ class _MessagesPageState extends State<MessagesPage> {
       ),
     ),
   );
+
+  Future<void> _startConversation() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (sheetContext) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.person_outline_rounded),
+                  title: Text(tr('Chat with a person', 'محادثة مع شخص')),
+                  onTap: () => Navigator.pop(sheetContext, 'person'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.group_add_outlined),
+                  title: Text(tr('Create a group', 'إنشاء مجموعة')),
+                  onTap: () => Navigator.pop(sheetContext, 'group'),
+                ),
+              ],
+            ),
+          ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'person') {
+      await _showPeople();
+    } else {
+      final conversation = await Navigator.push<_Conversation>(
+        context,
+        MaterialPageRoute(builder: (_) => const _CreateGroupPage()),
+      );
+      if (!mounted || conversation == null) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => _ChatPage(conversation: conversation)),
+      );
+      _refresh();
+    }
+  }
+
   Future<void> _showPeople() async {
     final selected = await showSearch<_Person?>(
       context: context,
@@ -176,6 +302,7 @@ class _MessagesPageState extends State<MessagesPage> {
                   name: selected.name,
                   message: '',
                   createdAt: DateTime.now(),
+                  group: false,
                 ),
               ),
         ),
@@ -210,7 +337,18 @@ class _ChatPageState extends State<_ChatPage> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final me = Supabase.instance.client.auth.currentUser!.id;
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    if (me == null) return [];
+    if (widget.conversation.group) {
+      final rows =
+          await Supabase.instance.client
+                  .from('group_messages')
+                  .select()
+                  .eq('group_id', widget.conversation.id)
+                  .order('created_at')
+              as List<dynamic>;
+      return rows.cast<Map<String, dynamic>>();
+    }
     final rows =
         await Supabase.instance.client
                 .from('direct_messages')
@@ -224,7 +362,9 @@ class _ChatPageState extends State<_ChatPage> {
   }
 
   Future<void> _markRead() async {
-    final me = Supabase.instance.client.auth.currentUser!.id;
+    if (widget.conversation.group) return;
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    if (me == null) return;
     await Supabase.instance.client
         .from('direct_messages')
         .update({'read_at': DateTime.now().toIso8601String()})
@@ -236,14 +376,20 @@ class _ChatPageState extends State<_ChatPage> {
   Future<void> _send({String? imageUrl}) async {
     final message = _text.text.trim();
     if (message.isEmpty && imageUrl == null) return;
-    final me = Supabase.instance.client.auth.currentUser!.id;
-    await Supabase.instance.client.from('direct_messages').insert({
-      'sender_id': me,
-      'receiver_id': widget.conversation.id,
-      'content': message,
-      'image_url': imageUrl,
-    });
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    if (me == null) return;
+    await Supabase.instance.client
+        .from(widget.conversation.group ? 'group_messages' : 'direct_messages')
+        .insert({
+          'sender_id': me,
+          if (widget.conversation.group) 'group_id': widget.conversation.id,
+          if (!widget.conversation.group)
+            'receiver_id': widget.conversation.id,
+          'content': message,
+          'image_url': imageUrl,
+        });
     _text.clear();
+    if (!mounted) return;
     setState(() => _loader = _load());
   }
 
@@ -281,16 +427,18 @@ class _ChatPageState extends State<_ChatPage> {
             ),
           ),
     );
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    if (me == null) return;
     if (value == 'friend') {
       await Supabase.instance.client.from('friend_requests').upsert({
-        'sender_id': Supabase.instance.client.auth.currentUser!.id,
+        'sender_id': me,
         'receiver_id': widget.conversation.id,
         'status': 'pending',
       });
     }
     if (value == 'block') {
       await Supabase.instance.client.from('user_blocks').upsert({
-        'blocker_id': Supabase.instance.client.auth.currentUser!.id,
+        'blocker_id': me,
         'blocked_id': widget.conversation.id,
       });
       if (mounted) {
@@ -302,10 +450,10 @@ class _ChatPageState extends State<_ChatPage> {
         SnackBar(
           content: Text(
             value == 'friend'
-                ? 'Friend request sent'
+                ? tr('Friend request sent', 'تم إرسال طلب الصداقة')
                 : value == 'mute'
-                ? 'Conversation muted'
-                : 'User blocked',
+                ? tr('Conversation muted', 'تم كتم المحادثة')
+                : tr('User blocked', 'تم حظر المستخدم'),
           ),
         ),
       );
@@ -314,7 +462,8 @@ class _ChatPageState extends State<_ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final me = Supabase.instance.client.auth.currentUser!.id;
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    if (me == null) return const SizedBox.shrink();
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.conversation.name),
@@ -349,30 +498,68 @@ class _ChatPageState extends State<_ChatPage> {
                     final row = rows[i];
                     final mine = row['sender_id'] == me;
                     final image = row['image_url'] as String?;
-                    return Align(
-                      alignment:
-                          mine ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 9),
-                        padding: const EdgeInsets.all(12),
-                        constraints: const BoxConstraints(maxWidth: 300),
-                        decoration: BoxDecoration(
-                          color: mine ? _green : const Color(0xFFFFFDF8),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child:
-                            image != null
-                                ? Image.network(image)
-                                : Text(
-                                  row['content'] as String? ?? '',
+                    final sentAt =
+                        DateTime.tryParse('${row['created_at'] ?? ''}')
+                            ?.toLocal() ??
+                        DateTime.now();
+                    final previous =
+                        i == 0
+                            ? null
+                            : DateTime.tryParse(
+                              '${rows[i - 1]['created_at'] ?? ''}',
+                            )?.toLocal();
+                    final showDivider =
+                        previous == null ||
+                        !DateUtils.isSameDay(previous, sentAt) ||
+                        sentAt.difference(previous) > const Duration(minutes: 90);
+                    return Column(
+                      children: [
+                        if (showDivider) _MessageTimeDivider(time: sentAt),
+                        Align(
+                          alignment:
+                              mine
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 9),
+                            padding: const EdgeInsets.all(12),
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            decoration: BoxDecoration(
+                              color: mine ? _green : const Color(0xFFFFFDF8),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (image != null)
+                                  Image.network(image)
+                                else
+                                  Text(
+                                    row['content'] as String? ?? '',
+                                    style: TextStyle(
+                                      color:
+                                          mine
+                                              ? const Color(0xFFFFFDF8)
+                                              : Colors.black,
+                                    ),
+                                  ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  _time(sentAt),
+                                  textDirection: TextDirection.ltr,
                                   style: TextStyle(
+                                    fontSize: 10,
                                     color:
                                         mine
-                                            ? const Color(0xFFFFFDF8)
-                                            : Colors.black,
+                                            ? const Color(0xB3FFFDF8)
+                                            : const Color(0x99000000),
                                   ),
                                 ),
-                      ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     );
                   },
                 );
@@ -432,7 +619,8 @@ class _ChatPageState extends State<_ChatPage> {
     setState(() => _uploadingImage = true);
     try {
       final client = Supabase.instance.client;
-      final userId = client.auth.currentUser!.id;
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) return;
       final extension = picked.name.split('.').last.toLowerCase();
       final safeExtension =
           {'jpg', 'jpeg', 'png', 'webp'}.contains(extension)
@@ -575,12 +763,15 @@ class _EmptyState extends StatelessWidget {
           ),
           SizedBox(height: 38),
           Text(
-            'No conversations',
+            tr('No conversations', 'لا توجد محادثات'),
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
           ),
           SizedBox(height: 8),
           Text(
-            'Your conversations will appear here.',
+            tr(
+              'Your conversations will appear here.',
+              'ستظهر محادثاتك هنا.',
+            ),
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0x99000000)),
           ),
@@ -609,7 +800,7 @@ class _ErrorState extends StatelessWidget {
 
 class _PeopleSearch extends SearchDelegate<_Person?> {
   @override
-  String get searchFieldLabel => 'Search players';
+  String get searchFieldLabel => tr('Search players', 'ابحث عن لاعبين');
   Future<List<_Person>> _find() async {
     final current = Supabase.instance.client.auth.currentUser?.id;
     final rows =
@@ -665,7 +856,7 @@ class _PeopleResults extends StatelessWidget {
                 ? const Center(child: CircularProgressIndicator())
                 : ListView(
                   children:
-                      s.data!
+                      (s.data ?? const <_Person>[])
                           .map(
                             (p) => ListTile(
                               leading: CircleAvatar(
@@ -690,11 +881,165 @@ class _Conversation {
     required this.name,
     required this.message,
     required this.createdAt,
+    this.group = false,
     this.unread = 0,
   });
   final String id, name, message;
   final DateTime createdAt;
   final int unread;
+  final bool group;
+}
+
+class _MessageTimeDivider extends StatelessWidget {
+  const _MessageTimeDivider({required this.time});
+
+  final DateTime time;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final date = DateUtils.dateOnly(time);
+    final day =
+        date == today
+            ? tr('Today', 'اليوم')
+            : date == today.subtract(const Duration(days: 1))
+            ? tr('Yesterday', 'أمس')
+            : '${date.day}/${date.month}/${date.year}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Text(
+        '$day، ${_time(time)}',
+        textDirection: TextDirection.ltr,
+        style: const TextStyle(color: Color(0x99000000), fontSize: 11),
+      ),
+    );
+  }
+}
+
+class _CreateGroupPage extends StatefulWidget {
+  const _CreateGroupPage();
+
+  @override
+  State<_CreateGroupPage> createState() => _CreateGroupPageState();
+}
+
+class _CreateGroupPageState extends State<_CreateGroupPage> {
+  final _name = TextEditingController();
+  late final Future<List<_Person>> _people = _loadPeople();
+  final Set<String> _selected = {};
+  bool _saving = false;
+
+  Future<List<_Person>> _loadPeople() async {
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    final rows = await Supabase.instance.client
+        .from('profiles')
+        .select('id, username, display_name, first_name')
+        .neq('id', me ?? '')
+        .order('display_name');
+    return List<Map<String, dynamic>>.from(rows).map((row) {
+      final display = '${row['first_name'] ?? row['display_name'] ?? row['username'] ?? ''}'.trim();
+      return _Person(row['id'] as String, display.isEmpty ? tr('Player', 'لاعب') : display);
+    }).toList();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    final name = _name.text.trim();
+    if (name.isEmpty || _selected.isEmpty || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final id = await Supabase.instance.client.rpc(
+        'create_group_chat',
+        params: {'p_name': name, 'p_member_ids': _selected.toList()},
+      );
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        _Conversation(
+          id: '$id',
+          name: name,
+          message: '',
+          createdAt: DateTime.now(),
+          group: true,
+        ),
+      );
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(tr('Create a group', 'إنشاء مجموعة'))),
+    body: Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: TextField(
+            controller: _name,
+            decoration: InputDecoration(
+              labelText: tr('Group name', 'اسم المجموعة'),
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<_Person>>(
+            future: _people,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) return _ErrorState(onRetry: () {});
+              final people = snapshot.data ?? const [];
+              return ListView(
+                children: people.map((person) {
+                  return CheckboxListTile(
+                    value: _selected.contains(person.id),
+                    title: Text(person.name),
+                    secondary: CircleAvatar(child: Text(person.name.characters.first)),
+                    onChanged: (selected) {
+                      setState(() {
+                        if (selected == true) {
+                          _selected.add(person.id);
+                        } else {
+                          _selected.remove(person.id);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: FilledButton(
+              onPressed:
+                  _saving || _name.text.trim().isEmpty || _selected.isEmpty
+                      ? null
+                      : _create,
+              child: Text(tr('Create group', 'إنشاء المجموعة')),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _Person {
@@ -706,4 +1051,178 @@ String _time(DateTime time) {
   final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
   final period = time.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
   return '$hour:${time.minute.toString().padLeft(2, '0')} $period';
+}
+
+class _ArenaAssistantPage extends StatefulWidget {
+  const _ArenaAssistantPage();
+
+  @override
+  State<_ArenaAssistantPage> createState() => _ArenaAssistantPageState();
+}
+
+class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
+  final _controller = TextEditingController();
+  final List<_AssistantMessage> _messages = [];
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final message = _controller.text.trim();
+    if (message.isEmpty || _sending) return;
+    setState(() {
+      _messages.add(_AssistantMessage(text: message, mine: true));
+      _sending = true;
+      _controller.clear();
+    });
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'arena-assistant',
+        body: {'message': message, 'locale': isArabic ? 'ar' : 'en'},
+      );
+      final data = Map<String, dynamic>.from(response.data as Map);
+      if (!mounted) return;
+      setState(
+        () => _messages.add(
+          _AssistantMessage(
+            text: '${data['reply'] ?? tr('No answer was returned.', 'لم تصل إجابة.')}',
+            arenas: List<Map<String, dynamic>>.from(data['arenas'] as List? ?? const []),
+          ),
+        ),
+      );
+    } on FunctionException {
+      if (!mounted) return;
+      setState(
+        () => _messages.add(
+          _AssistantMessage(
+            text: tr(
+              'The assistant is unavailable or not configured yet.',
+              'المساعد غير متاح أو لم يتم تفعيله بعد.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(tr('Arena Assistant', 'مساعد Arena'))),
+    body: Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: _messages.length,
+            itemBuilder: (context, index) {
+              final message = _messages[index];
+              return Align(
+                alignment:
+                    message.mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 340),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: message.mine ? const Color(0xFF0D2946) : Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0x220D2946)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        message.text,
+                        style: TextStyle(color: message.mine ? Colors.white : const Color(0xFF0D2946)),
+                      ),
+                      ...message.arenas.map(
+                        (arena) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            localizedData(
+                              arena,
+                              'name',
+                              englishFallback: 'Arena',
+                              arabicFallback: 'ملعب',
+                            ),
+                          ),
+                          subtitle: Text(
+                            localizedData(
+                              arena,
+                              'location',
+                              englishFallback: 'Location unavailable',
+                              arabicFallback: 'الموقع غير متاح',
+                            ),
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () {
+                            // The assistant returns only server-verified arena
+                            // IDs; the existing details route remains canonical.
+                            final id = arena['id'] as String?;
+                            if (id == null) return;
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => ProductionArenaDetailsPage(arenaId: id),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    onSubmitted: (_) => _send(),
+                    decoration: InputDecoration(
+                      hintText: tr(
+                        'Ask about an available arena...',
+                        'ابحث عن ملعب متاح...',
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _sending ? null : _send,
+                  icon:
+                      _sending
+                          ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Icon(Icons.send_rounded),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _AssistantMessage {
+  const _AssistantMessage({required this.text, this.mine = false, this.arenas = const []});
+  final String text;
+  final bool mine;
+  final List<Map<String, dynamic>> arenas;
 }

@@ -7,6 +7,7 @@ import '../../../core/services/guest_session.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/booking_slot_selection.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/request_id.dart';
 
 class BookingPage extends StatefulWidget {
   const BookingPage({super.key, required this.arenaId});
@@ -25,6 +26,12 @@ class _BookingPageState extends State<BookingPage> {
   bool _loadingAvailability = true;
   bool _availabilityInitialized = false;
   String? _availabilityError;
+  int _waterCartons = 0;
+  List<Map<String, dynamic>> _coupons = const [];
+  String? _couponId;
+  late String _bookingRequestId;
+  RealtimeChannel? _bookingAvailabilityChannel;
+  RealtimeChannel? _matchAvailabilityChannel;
 
   DateTime? get _start => _selectedSlots.isEmpty ? null : _selectedSlots.first;
   DateTime? get _end =>
@@ -33,7 +40,8 @@ class _BookingPageState extends State<BookingPage> {
           : _selectedSlots.last.add(const Duration(hours: 1));
   double get _total => roundOmr(
     _selectedSlots.length *
-        normalizeOmrPrice(_arena?['price_per_hour'] as num? ?? 0),
+            normalizeOmrPrice(_arena?['price_per_hour'] as num? ?? 0) +
+        _waterCartons * .500,
   );
   Map<String, dynamic>? _arena;
   late Future<Map<String, dynamic>> _arenaLoader;
@@ -44,7 +52,61 @@ class _BookingPageState extends State<BookingPage> {
     final today = DateUtils.dateOnly(DateTime.now());
     _visibleMonth = DateTime(today.year, today.month);
     _selectedDate = today;
+    _bookingRequestId = newRequestId();
     _arenaLoader = ProductionRepository.arenaById(widget.arenaId);
+    _loadCoupons();
+    _bookingAvailabilityChannel =
+        Supabase.instance.client.channel('booking-availability-${widget.arenaId}')
+          ..onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'bookings',
+            callback: (_) {
+              if (mounted && _availabilityInitialized) _loadVisibleMonth();
+            },
+          )
+          ..subscribe();
+    _matchAvailabilityChannel =
+        Supabase.instance.client.channel('match-availability-${widget.arenaId}')
+          ..onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'matches',
+            callback: (_) {
+              if (mounted && _availabilityInitialized) _loadVisibleMonth();
+            },
+          )
+          ..subscribe();
+  }
+
+  @override
+  void dispose() {
+    final bookingChannel = _bookingAvailabilityChannel;
+    if (bookingChannel != null) {
+      Supabase.instance.client.removeChannel(bookingChannel);
+    }
+    final matchChannel = _matchAvailabilityChannel;
+    if (matchChannel != null) {
+      Supabase.instance.client.removeChannel(matchChannel);
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadCoupons() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      final rows = await Supabase.instance.client
+          .from('reward_coupons')
+          .select('id,value_omr')
+          .eq('user_id', userId)
+          .eq('status', 'available')
+          .order('created_at');
+      if (!mounted) return;
+      setState(() => _coupons = List<Map<String, dynamic>>.from(rows));
+    } on PostgrestException {
+      // Rewards migration may not have been applied yet; booking stays usable.
+    }
   }
 
   Future<void> _loadVisibleMonth() async {
@@ -207,6 +269,32 @@ class _BookingPageState extends State<BookingPage> {
       );
       return;
     }
+    if (_couponId != null && _total < 1) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder:
+            (dialogContext) => AlertDialog(
+              title: Text(tr('Use coupon?', 'استخدام الكوبون؟')),
+              content: Text(
+                tr(
+                  'The transaction is worth less than the coupon. If you continue, the full coupon will be used and the difference will not be refunded.',
+                  'قيمة العملية أقل من قيمة الكوبون. إذا تابعت، سيُستخدم الكوبون كاملًا ولن يُعاد الفرق.',
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(tr('Back', 'رجوع')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(tr('Continue', 'متابعة')),
+                ),
+              ],
+            ),
+      );
+      if (!mounted || proceed != true) return;
+    }
     setState(() => _saving = true);
     try {
       if (!await _selectionStillAvailable()) {
@@ -224,23 +312,27 @@ class _BookingPageState extends State<BookingPage> {
         await _loadVisibleMonth();
         return;
       }
-      final userId = ProductionRepository.client.auth.currentUser?.id;
-      if (userId == null) return;
-      await ProductionRepository.client.from('bookings').insert({
-        'user_id': userId,
-        'arena_id': widget.arenaId,
-        'starts_at': start.toUtc().toIso8601String(),
-        'ends_at': end.toUtc().toIso8601String(),
-        'total_price': _total,
-        'status': 'upcoming',
-      });
+      final result = await ProductionRepository.createArenaBooking(
+        arenaId: widget.arenaId,
+        startsAt: start,
+        endsAt: end,
+        waterCartons: _waterCartons,
+        idempotencyKey: _bookingRequestId,
+        couponId: _couponId,
+      );
       if (!mounted) return;
       await _loadVisibleMonth();
       if (!mounted) return;
+      final courtNumber = result['court_number'];
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            tr('Booking saved successfully.', 'تم حفظ الحجز بنجاح.'),
+            courtNumber == null
+                ? tr('Booking saved successfully.', 'تم حفظ الحجز بنجاح.')
+                : tr(
+                  'Booking confirmed — Court $courtNumber.',
+                  'تم تأكيد حجزك — الملعب رقم $courtNumber.',
+                ),
           ),
         ),
       );
@@ -368,6 +460,46 @@ class _BookingPageState extends State<BookingPage> {
                     start: bookingStart,
                     end: bookingEnd,
                     hours: _selectedSlots.length,
+                  ),
+                ],
+                const SizedBox(height: 16),
+                if (_coupons.isNotEmpty) ...[
+                  DropdownButtonFormField<String?>(
+                    initialValue: _couponId,
+                    decoration: InputDecoration(
+                      labelText: tr('Discount coupon', 'كوبون الخصم'),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    items: [
+                      DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text(tr('Without coupon', 'بدون كوبون')),
+                      ),
+                      ..._coupons.map(
+                        (coupon) => DropdownMenuItem<String?>(
+                          value: coupon['id'] as String,
+                          child: Text(tr('OMR 1 coupon', 'كوبون 1 ر.ع')),
+                        ),
+                      ),
+                    ],
+                    onChanged:
+                        _saving ? null : (value) => setState(() => _couponId = value),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                _WaterCartonSelector(
+                  quantity: _waterCartons,
+                  onChanged:
+                      _saving
+                          ? null
+                          : (value) => setState(() => _waterCartons = value),
+                ),
+                if (_waterCartons > 0 || _couponId != null) ...[
+                  const SizedBox(height: 10),
+                  _BookingTotal(
+                    total: _couponId == null ? _total : (_total - 1).clamp(0, double.infinity),
                   ),
                 ],
                 const SizedBox(height: 18),
@@ -746,7 +878,7 @@ class _BookingTimeBox extends StatelessWidget {
   Widget build(BuildContext context) {
     final time = MaterialLocalizations.of(context).formatTimeOfDay(
       TimeOfDay.fromDateTime(slot),
-      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+      alwaysUse24HourFormat: false,
     );
     return Material(
       color:
@@ -848,7 +980,7 @@ class _BookingSummary extends StatelessWidget {
     String time(DateTime value) =>
         MaterialLocalizations.of(context).formatTimeOfDay(
           TimeOfDay.fromDateTime(value),
-          alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+          alwaysUse24HourFormat: false,
         );
     final duration =
         hours == 1
@@ -963,14 +1095,109 @@ String _monthTitle(DateTime month, bool arabic) {
 String _bookingError(String message) {
   final normalized = message.toLowerCase();
   if (normalized.contains('already booked') ||
-      normalized.contains('conflict')) {
+      normalized.contains('conflict') ||
+      normalized.contains('time_no_longer_available')) {
     return tr(
       'This arena is already booked for the selected time.',
       'الملعب محجوز بالفعل في الوقت المحدد.',
     );
   }
+  if (normalized.contains('profile_gender_required')) {
+    return tr(
+      'Choose your gender in your profile before booking.',
+      'حدد الجنس في ملفك الشخصي قبل الحجز.',
+    );
+  }
+  if (normalized.contains('gender_not_allowed')) {
+    return tr(
+      'This arena is not available for your profile gender.',
+      'هذا الملعب غير متاح للجنس المحدد في ملفك الشخصي.',
+    );
+  }
   return tr(
     'Could not save the booking. Please choose another time and try again.',
     'تعذر حفظ الحجز. اختر وقتًا آخر ثم حاول مجددًا.',
+  );
+}
+
+class _WaterCartonSelector extends StatelessWidget {
+  const _WaterCartonSelector({required this.quantity, required this.onChanged});
+
+  final int quantity;
+  final ValueChanged<int>? onChanged;
+
+  void _changeBy(int delta) {
+    final callback = onChanged;
+    if (callback != null) callback(quantity + delta);
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0x180D2946)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.water_drop_outlined, color: AppColors.navy),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                tr('Add water cartons?', 'هل تريد إضافة ماء؟'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              Text(
+                tr('OMR 0.500 per carton', '0.500 ر.ع لكل كرتون'),
+                style: const TextStyle(color: Color(0x99000000), fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed:
+              quantity == 0 || onChanged == null
+                  ? null
+                  : () => _changeBy(-1),
+          icon: const Icon(Icons.remove_circle_outline),
+        ),
+        Text(
+          '$quantity',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+        ),
+        IconButton(
+          onPressed: onChanged == null ? null : () => _changeBy(1),
+          icon: const Icon(Icons.add_circle_outline),
+        ),
+      ],
+    ),
+  );
+}
+
+class _BookingTotal extends StatelessWidget {
+  const _BookingTotal({required this.total});
+
+  final num total;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Text(
+        tr('Booking total', 'إجمالي الحجز'),
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      OmrPrice(
+        value: total,
+        style: const TextStyle(
+          color: AppColors.navy,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    ],
   );
 }

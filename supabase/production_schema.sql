@@ -9,7 +9,7 @@ create table if not exists public.arenas (
   longitude double precision,
   image_urls text[] not null default '{}',
   sports text[] not null default '{}',
-  audience_gender text not null default 'mixed' check (audience_gender in ('men','women','mixed')),
+  audience_gender text not null default 'men' check (audience_gender in ('men','women')),
   price_per_hour numeric(10,2) not null check (price_per_hour >= 0),
   rating numeric(2,1) check (rating between 0 and 5),
   opening_time time,

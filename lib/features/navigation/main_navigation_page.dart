@@ -20,6 +20,7 @@ class MainNavigationPage extends StatefulWidget {
 class _MainNavigationPageState extends State<MainNavigationPage> {
   static const int _gamesIndex = 1;
   int _selectedIndex = _gamesIndex;
+  late final PageController _pageController;
 
   static const List<Widget> _pages = <Widget>[
     HomePage(),
@@ -29,14 +30,28 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     ProfilePage(),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _selectedIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   void _selectPage(int index) {
     if (index == _selectedIndex) {
       return;
     }
 
-    setState(() {
-      _selectedIndex = index;
-    });
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   @override
@@ -80,9 +95,19 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
       },
       child: Scaffold(
         extendBody: true,
-        body: IndexedStack(index: _selectedIndex, children: _pages),
+        body: PageView(
+          controller: _pageController,
+          allowImplicitScrolling: true,
+          onPageChanged: (index) {
+            if (_selectedIndex != index) {
+              setState(() => _selectedIndex = index);
+            }
+          },
+          children: _pages,
+        ),
         bottomNavigationBar: _PlayOnBottomNavigationBar(
           currentIndex: _selectedIndex,
+          pageController: _pageController,
           items: items,
           onSelected: _selectPage,
         ),
@@ -94,11 +119,13 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 class _PlayOnBottomNavigationBar extends StatelessWidget {
   const _PlayOnBottomNavigationBar({
     required this.currentIndex,
+    required this.pageController,
     required this.items,
     required this.onSelected,
   });
 
   final int currentIndex;
+  final PageController pageController;
   final List<_NavigationItem> items;
   final ValueChanged<int> onSelected;
 
@@ -130,19 +157,58 @@ class _PlayOnBottomNavigationBar extends StatelessWidget {
                 ),
               ],
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: List<Widget>.generate(items.length, (int index) {
-                return Expanded(
-                  child: _NavigationTab(
-                    item: items[index],
-                    selected: currentIndex == index,
-                    onTap: () {
-                      onSelected(index);
-                    },
-                  ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final segmentWidth = constraints.maxWidth / items.length;
+                final activeWidth =
+                    (segmentWidth + 34).clamp(82.0, 108.0).toDouble();
+                final arabic = Directionality.of(context) == TextDirection.rtl;
+                return AnimatedBuilder(
+                  animation: pageController,
+                  builder: (context, _) {
+                    final logicalPage =
+                        pageController.hasClients
+                            ? (pageController.page ?? currentIndex.toDouble())
+                            : currentIndex.toDouble();
+                    final physicalPage =
+                        arabic ? items.length - 1 - logicalPage : logicalPage;
+                    final left =
+                        physicalPage * segmentWidth +
+                        (segmentWidth - activeWidth) / 2;
+                    final labelIndex = logicalPage
+                        .round()
+                        .clamp(0, items.length - 1)
+                        .toInt();
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        Row(
+                          children: List<Widget>.generate(items.length, (index) {
+                            return Expanded(
+                              child: _NavigationIconButton(
+                                item: items[index],
+                                hidden: currentIndex == index,
+                                onTap: () => onSelected(index),
+                              ),
+                            );
+                          }),
+                        ),
+                        Positioned(
+                          left: left,
+                          top: 3,
+                          width: activeWidth,
+                          height: 46,
+                          child: _ActiveNavigationPill(
+                            item: items[labelIndex],
+                            onTap: () => onSelected(labelIndex),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 );
-              }),
+              },
             ),
           ),
         ),
@@ -151,81 +217,78 @@ class _PlayOnBottomNavigationBar extends StatelessWidget {
   }
 }
 
-class _NavigationTab extends StatelessWidget {
-  const _NavigationTab({
+class _NavigationIconButton extends StatelessWidget {
+  const _NavigationIconButton({
     required this.item,
-    required this.selected,
+    required this.hidden,
     required this.onTap,
   });
 
   final _NavigationItem item;
-  final bool selected;
+  final bool hidden;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
-      child: Center(
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(24),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              height: 46,
-              constraints: BoxConstraints(
-                minWidth: selected ? 80 : 42,
-                maxWidth: selected ? 104 : 48,
-              ),
-              padding: EdgeInsets.symmetric(horizontal: selected ? 10 : 8),
-              decoration: BoxDecoration(
-                color:
-                    selected
-                        ? _PlayOnBottomNavigationBar._activeColor
-                        : Colors.transparent,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: <Widget>[
-                  Icon(
-                    selected ? item.selectedIcon : item.icon,
-                    size: 21,
-                    color:
-                        selected
-                            ? AppColors.warmWhite
-                            : _PlayOnBottomNavigationBar._inactiveColor,
-                  ),
-                  if (selected) ...<Widget>[
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        item.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.fade,
-                        softWrap: false,
-                        style: const TextStyle(
-                          color: AppColors.courtMist,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.15,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
+    return Semantics(
+      button: true,
+      label: item.label,
+      child: IconButton(
+        onPressed: onTap,
+        icon: AnimatedOpacity(
+          duration: const Duration(milliseconds: 120),
+          opacity: hidden ? 0 : 1,
+          child: Icon(
+            item.icon,
+            size: 21,
+            color: _PlayOnBottomNavigationBar._inactiveColor,
           ),
         ),
       ),
     );
   }
+}
+
+class _ActiveNavigationPill extends StatelessWidget {
+  const _ActiveNavigationPill({required this.item, required this.onTap});
+
+  final _NavigationItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: _PlayOnBottomNavigationBar._activeColor,
+    borderRadius: BorderRadius.circular(25),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(25),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(item.selectedIcon, size: 21, color: AppColors.warmWhite),
+            const SizedBox(width: 6),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: AppColors.courtMist,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.15,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _NavigationItem {
