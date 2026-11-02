@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/oman_time.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../shared/widgets/arena_empty_state.dart';
+import 'booking_cancellation_panel.dart';
 
 class MyBookingsPage extends StatefulWidget {
-  const MyBookingsPage({super.key});
+  const MyBookingsPage({super.key, this.initialBookingId});
+  final String? initialBookingId;
 
   @override
   State<MyBookingsPage> createState() => _MyBookingsPageState();
@@ -23,25 +27,30 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
   Future<List<Map<String, dynamic>>> _load() async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return [];
-    final rows = await Supabase.instance.client
+    var query = Supabase.instance.client
         .from('bookings')
         .select('*, arenas(*), arena_courts(court_number,label_ar,label_en)')
-        .eq('user_id', userId)
-        .order('starts_at', ascending: false);
+        .eq('user_id', userId);
+    if (widget.initialBookingId != null) {
+      query = query.eq('id', widget.initialBookingId!);
+    }
+    final rows = await query.order('starts_at', ascending: false);
     return List<Map<String, dynamic>>.from(rows);
   }
 
   Future<void> _refresh() async {
     final value = _load();
-    setState(() => _bookings = value);
+    setState(() {
+      _bookings = value;
+    });
     await value;
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFFFFDF8),
+    backgroundColor: const Color(0xFFF4F7F9),
     appBar: AppBar(
-      backgroundColor: const Color(0xFFFFFDF8),
+      backgroundColor: const Color(0xFFF4F7F9),
       title: Text(tr('My bookings', 'حجوزاتي')),
     ),
     body: FutureBuilder<List<Map<String, dynamic>>>(
@@ -59,8 +68,13 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
         }
         final rows = snapshot.data ?? const [];
         if (rows.isEmpty) {
-          return Center(
-            child: Text(tr('No bookings yet.', 'لا توجد حجوزات بعد.')),
+          return ArenaEmptyState(
+            icon: Icons.event_available_outlined,
+            title: tr('No bookings yet', 'لا توجد حجوزات بعد'),
+            message: tr(
+              'Book an arena and your reservation will appear here.',
+              'احجز ملعبًا وسيظهر حجزك هنا.',
+            ),
           );
         }
         final now = DateTime.now();
@@ -88,18 +102,21 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
             children: [
               if (current.isNotEmpty)
                 _BookingSection(
+                  onChanged: _refresh,
                   title: tr('In progress', 'قيد التنفيذ'),
                   rows: current,
                   kind: _BookingKind.current,
                 ),
               if (upcoming.isNotEmpty)
                 _BookingSection(
+                  onChanged: _refresh,
                   title: tr('Upcoming', 'قادمة'),
                   rows: upcoming,
                   kind: _BookingKind.upcoming,
                 ),
               if (previous.isNotEmpty)
                 _BookingSection(
+                  onChanged: _refresh,
                   title: tr('Previous', 'سابقة'),
                   rows: previous,
                   kind: _BookingKind.previous,
@@ -119,10 +136,12 @@ class _BookingSection extends StatelessWidget {
     required this.title,
     required this.rows,
     required this.kind,
+    required this.onChanged,
   });
   final String title;
   final List<Map<String, dynamic>> rows;
   final _BookingKind kind;
+  final VoidCallback onChanged;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -131,19 +150,27 @@ class _BookingSection extends StatelessWidget {
         padding: const EdgeInsets.only(left: 4, bottom: 10),
         child: Text(
           title,
-          style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900),
+          style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
         ),
       ),
-      ...rows.map((booking) => _BookingCard(booking: booking, kind: kind)),
+      ...rows.map(
+        (booking) =>
+            _BookingCard(booking: booking, kind: kind, onChanged: onChanged),
+      ),
       const SizedBox(height: 12),
     ],
   );
 }
 
 class _BookingCard extends StatelessWidget {
-  const _BookingCard({required this.booking, required this.kind});
+  const _BookingCard({
+    required this.booking,
+    required this.kind,
+    required this.onChanged,
+  });
   final Map<String, dynamic> booking;
   final _BookingKind kind;
+  final VoidCallback onChanged;
   @override
   Widget build(BuildContext context) {
     final arena = booking['arenas'] as Map<String, dynamic>? ?? const {};
@@ -168,7 +195,7 @@ class _BookingCard extends StatelessWidget {
             ? AppColors.navy
             : kind == _BookingKind.upcoming
             ? AppColors.navy
-            : const Color(0x99000000);
+            : const Color(0xFF607184);
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 12),
@@ -189,7 +216,7 @@ class _BookingCard extends StatelessWidget {
                     ),
                     style: const TextStyle(
                       fontSize: 19,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -205,9 +232,9 @@ class _BookingCard extends StatelessWidget {
                   child: Text(
                     label,
                     style: const TextStyle(
-                      color: Color(0xFFFFFDF8),
+                      color: Color(0xFFF4F7F9),
                       fontSize: 10,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -216,7 +243,7 @@ class _BookingCard extends StatelessWidget {
             const SizedBox(height: 9),
             Text(
               '${_date(start)} · ${_time(start)} – ${_time(end)}',
-              style: const TextStyle(color: Color(0x99000000)),
+              style: const TextStyle(color: Color(0xFF607184)),
             ),
             if (courtNumber != null) ...[
               const SizedBox(height: 6),
@@ -228,20 +255,22 @@ class _BookingCard extends StatelessWidget {
             if (waterCartons > 0) ...[
               const SizedBox(height: 6),
               Text(
-                tr(
-                  '$waterCartons water carton(s)',
-                  '$waterCartons كرتون ماء',
-                ),
+                tr('$waterCartons water carton(s)', '$waterCartons كرتون ماء'),
               ),
             ],
             const Divider(height: 25),
+            BookingCancellationPanel(
+              key: ValueKey('${booking['id']}-${booking['status']}'),
+              bookingId: booking['id'].toString(),
+              onChanged: onChanged,
+            ),
             Align(
               alignment: Alignment.centerRight,
               child: OmrPrice(
                 value: booking['total_price'] as num,
                 style: const TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -253,10 +282,7 @@ class _BookingCard extends StatelessWidget {
 }
 
 String _time(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(value);
 }
 
-String _date(DateTime value) =>
-    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+String _date(DateTime value) => formatOmanDate(value);

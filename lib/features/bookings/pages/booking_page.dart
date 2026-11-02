@@ -1,4 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../../core/utils/oman_time.dart';
+import '../../../core/utils/arena_availability.dart';
 import '../../../core/localization/app_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -8,6 +12,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/booking_slot_selection.dart';
 import '../../../core/utils/omr_currency.dart';
 import '../../../core/utils/request_id.dart';
+import 'checkout_page.dart';
 
 class BookingPage extends StatefulWidget {
   const BookingPage({super.key, required this.arenaId});
@@ -21,15 +26,17 @@ class _BookingPageState extends State<BookingPage> {
   late DateTime _visibleMonth;
   DateTime? _selectedDate;
   List<DateTime> _selectedSlots = [];
-  List<BookingInterval> _busyIntervals = [];
+  List<ArenaAvailabilitySlot> _serverSlots = [];
+  int _availabilityRequest = 0;
+  bool _checkingSelection = false;
   bool _saving = false;
   bool _loadingAvailability = true;
   bool _availabilityInitialized = false;
   String? _availabilityError;
-  int _waterCartons = 0;
   List<Map<String, dynamic>> _coupons = const [];
   String? _couponId;
   late String _bookingRequestId;
+  Timer? _availabilityTimer;
   RealtimeChannel? _bookingAvailabilityChannel;
   RealtimeChannel? _matchAvailabilityChannel;
 
@@ -37,26 +44,31 @@ class _BookingPageState extends State<BookingPage> {
   DateTime? get _end =>
       _selectedSlots.isEmpty
           ? null
-          : _selectedSlots.last.add(const Duration(hours: 1));
-  double get _total => roundOmr(
-    _selectedSlots.length *
-            normalizeOmrPrice(_arena?['price_per_hour'] as num? ?? 0) +
-        _waterCartons * .500,
-  );
+          : _selectedSlots.last.add(bookingSlotDuration);
   Map<String, dynamic>? _arena;
   late Future<Map<String, dynamic>> _arenaLoader;
 
   @override
   void initState() {
     super.initState();
-    final today = DateUtils.dateOnly(DateTime.now());
-    _visibleMonth = DateTime(today.year, today.month);
+    final today = omanDateOnly(toOmanTime(DateTime.now()));
+    _visibleMonth = DateTime.utc(today.year, today.month);
     _selectedDate = today;
     _bookingRequestId = newRequestId();
     _arenaLoader = ProductionRepository.arenaById(widget.arenaId);
     _loadCoupons();
+    _availabilityTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted &&
+          _availabilityInitialized &&
+          !_loadingAvailability &&
+          !_saving) {
+        _loadVisibleMonth();
+      }
+    });
     _bookingAvailabilityChannel =
-        Supabase.instance.client.channel('booking-availability-${widget.arenaId}')
+        Supabase.instance.client.channel(
+            'booking-availability-${widget.arenaId}',
+          )
           ..onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
@@ -81,6 +93,7 @@ class _BookingPageState extends State<BookingPage> {
 
   @override
   void dispose() {
+    _availabilityTimer?.cancel();
     final bookingChannel = _bookingAvailabilityChannel;
     if (bookingChannel != null) {
       Supabase.instance.client.removeChannel(bookingChannel);
@@ -116,22 +129,24 @@ class _BookingPageState extends State<BookingPage> {
       _loadingAvailability = true;
       _availabilityError = null;
     });
+    final request = ++_availabilityRequest;
     final from = _visibleMonth;
-    final to = DateTime(from.year, from.month + 1, 2);
+    final to = DateTime.utc(from.year, from.month + 1, 1);
     try {
-      final intervals = await ProductionRepository.arenaBusyIntervals(
+      final intervals = await ProductionRepository.arenaAvailability(
         arenaId: widget.arenaId,
         from: from,
         to: to,
       );
-      if (!mounted) return;
+      if (!mounted || request != _availabilityRequest) return;
       setState(() {
-        _busyIntervals = intervals;
+        _serverSlots = intervals;
         _loadingAvailability = false;
       });
-    } on PostgrestException {
-      if (!mounted) return;
+    } catch (_) {
+      if (!mounted || request != _availabilityRequest) return;
       setState(() {
+        _serverSlots = [];
         _loadingAvailability = false;
         _availabilityError = tr(
           'Could not load availability. Try again.',
@@ -142,15 +157,16 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   Future<void> _changeMonth(int delta) async {
-    final next = DateTime(_visibleMonth.year, _visibleMonth.month + delta);
-    final today = DateUtils.dateOnly(DateTime.now());
-    final firstAllowed = DateTime(today.year, today.month);
-    final lastAllowed = DateTime(today.year, today.month + 12);
+    final next = DateTime.utc(_visibleMonth.year, _visibleMonth.month + delta);
+    final today = omanDateOnly(toOmanTime(DateTime.now()));
+    final firstAllowed = DateTime.utc(today.year, today.month);
+    final lastAllowed = DateTime.utc(today.year, today.month + 12);
     if (next.isBefore(firstAllowed) || next.isAfter(lastAllowed)) return;
     setState(() {
       _visibleMonth = next;
       _selectedDate = null;
       _selectedSlots = [];
+      _serverSlots = [];
     });
     await _loadVisibleMonth();
   }
@@ -158,17 +174,19 @@ class _BookingPageState extends State<BookingPage> {
   void _selectDate(DateTime date) {
     if (_isDayUnavailable(date)) return;
     setState(() {
-      _selectedDate = DateUtils.dateOnly(date);
+      _selectedDate = omanDateOnly(date);
       _selectedSlots = [];
     });
   }
 
-  void _toggleSlot(DateTime slot) {
+  Future<void> _toggleSlot(DateTime slot) async {
+    if (_checkingSelection || _saving || _loadingAvailability) return;
     final unavailable = _isSlotUnavailable(slot);
     final result = toggleConsecutiveBookingSlot(
       current: _selectedSlots,
       slot: slot,
       unavailable: unavailable,
+      slotDuration: bookingSlotDuration,
     );
     if (result.nonConsecutive) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -183,73 +201,62 @@ class _BookingPageState extends State<BookingPage> {
       );
       return;
     }
-    setState(() => _selectedSlots = result.selected);
-  }
-
-  List<DateTime> _slotsFor(DateTime date) {
-    final arena = _arena;
-    if (arena == null) return const [];
-    final opening = _parseArenaTime(arena['opening_time'] as String?);
-    final closing = _parseArenaTime(arena['closing_time'] as String?);
-    final day = DateUtils.dateOnly(date);
-    final slots = <DateTime>[];
-
-    void addOperatingPeriod(DateTime operatingDay) {
-      final periodStart = DateTime(
-        operatingDay.year,
-        operatingDay.month,
-        operatingDay.day,
-        opening.$1,
-        opening.$2,
-      );
-      var periodEnd = DateTime(
-        operatingDay.year,
-        operatingDay.month,
-        operatingDay.day,
-        closing.$1,
-        closing.$2,
-      );
-      if (!periodEnd.isAfter(periodStart)) {
-        periodEnd = periodEnd.add(const Duration(days: 1));
+    final day = _selectedDate;
+    setState(() => _checkingSelection = true);
+    try {
+      if (result.selected.isNotEmpty &&
+          !await ProductionRepository.rangeAvailable(
+            widget.arenaId,
+            result.selected.first,
+            result.selected.last.add(bookingSlotDuration),
+          )) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                tr(
+                  'No single court is free for this entire range.',
+                  'لا يوجد ملعب واحد متاح طوال الفترة.',
+                ),
+              ),
+            ),
+          );
+        }
+        return;
       }
-      for (
-        var value = periodStart;
-        !value.add(const Duration(hours: 1)).isAfter(periodEnd);
-        value = value.add(const Duration(hours: 1))
-      ) {
-        if (DateUtils.isSameDay(value, day)) slots.add(value);
+      if (mounted && day == _selectedDate) {
+        setState(() => _selectedSlots = result.selected);
       }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _availabilityError = tr(
+                'Could not check availability. Retry.',
+                'تعذر التحقق من التوفر. أعد المحاولة.',
+              ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingSelection = false);
     }
-
-    addOperatingPeriod(day.subtract(const Duration(days: 1)));
-    addOperatingPeriod(day);
-    slots.sort();
-    return slots.toSet().toList();
   }
+
+  List<DateTime> _slotsFor(DateTime date) => slotsOnDate(_serverSlots, date);
 
   bool _isSlotUnavailable(DateTime slot) =>
-      !slot.isAfter(DateTime.now()) || isBookingSlotBusy(slot, _busyIntervals);
+      !slot.isAfter(toOmanTime(DateTime.now())) ||
+      serverSlotUnavailable(_serverSlots, slot);
 
   bool _isDayUnavailable(DateTime date) {
-    final day = DateUtils.dateOnly(date);
-    if (day.isBefore(DateUtils.dateOnly(DateTime.now()))) return true;
+    final day = omanDateOnly(date);
+    if (day.isBefore(omanDateOnly(toOmanTime(DateTime.now())))) return true;
     final slots = _slotsFor(day);
     return slots.isEmpty || slots.every(_isSlotUnavailable);
   }
 
-  Future<bool> _selectionStillAvailable() async {
-    final start = _start;
-    final end = _end;
-    if (start == null || end == null) return false;
-    final latest = await ProductionRepository.arenaBusyIntervals(
-      arenaId: widget.arenaId,
-      from: start,
-      to: end,
-    );
-    return _selectedSlots.every((slot) => !isBookingSlotBusy(slot, latest));
-  }
-
   Future<void> _book() async {
+    if (_saving || _checkingSelection) return;
     if (!await GuestSession.requireAccount(context, action: 'book an arena')) {
       return;
     }
@@ -269,57 +276,25 @@ class _BookingPageState extends State<BookingPage> {
       );
       return;
     }
-    if (_couponId != null && _total < 1) {
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder:
-            (dialogContext) => AlertDialog(
-              title: Text(tr('Use coupon?', 'استخدام الكوبون؟')),
-              content: Text(
-                tr(
-                  'The transaction is worth less than the coupon. If you continue, the full coupon will be used and the difference will not be refunded.',
-                  'قيمة العملية أقل من قيمة الكوبون. إذا تابعت، سيُستخدم الكوبون كاملًا ولن يُعاد الفرق.',
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: Text(tr('Back', 'رجوع')),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: Text(tr('Continue', 'متابعة')),
-                ),
-              ],
-            ),
-      );
-      if (!mounted || proceed != true) return;
-    }
     setState(() => _saving = true);
     try {
-      if (!await _selectionStillAvailable()) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              tr(
-                'One of these hours was just booked. Choose another time.',
-                'تم حجز إحدى هذه الساعات للتو. اختر وقتًا آخر.',
+      final result = await Navigator.push<Map<String, dynamic>>(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => CheckoutPage(
+                requestKey: _bookingRequestId,
+                request: {
+                  'purpose': 'booking',
+                  'arena_id': widget.arenaId,
+                  'starts_at': omanWallToUtc(start).toIso8601String(),
+                  'ends_at': omanWallToUtc(end).toIso8601String(),
+                  'coupon_id': _couponId,
+                },
               ),
-            ),
-          ),
-        );
-        await _loadVisibleMonth();
-        return;
-      }
-      final result = await ProductionRepository.createArenaBooking(
-        arenaId: widget.arenaId,
-        startsAt: start,
-        endsAt: end,
-        waterCartons: _waterCartons,
-        idempotencyKey: _bookingRequestId,
-        couponId: _couponId,
+        ),
       );
+      if (result == null) return;
       if (!mounted) return;
       await _loadVisibleMonth();
       if (!mounted) return;
@@ -343,6 +318,19 @@ class _BookingPageState extends State<BookingPage> {
           context,
         ).showSnackBar(SnackBar(content: Text(_bookingError(error.message))));
       }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              tr(
+                'Connection interrupted. Retry to check your booking.',
+                'انقطع الاتصال. أعد المحاولة للتحقق من الحجز.',
+              ),
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -353,9 +341,12 @@ class _BookingPageState extends State<BookingPage> {
     backgroundColor: const Color(0xFFFFFEFC),
     appBar: PreferredSize(
       preferredSize: const Size.fromHeight(92),
-      child: _BookingHeader(
-        title: tr('Choose date and time', 'اختر التاريخ والوقت'),
-        onBack: () => Navigator.of(context).maybePop(),
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: _BookingHeader(
+          title: tr('Choose date and time', 'اختر التاريخ والوقت'),
+          onBack: () => Navigator.of(context).maybePop(),
+        ),
       ),
     ),
     body: FutureBuilder<Map<String, dynamic>>(
@@ -424,11 +415,13 @@ class _BookingPageState extends State<BookingPage> {
                   style: const TextStyle(
                     color: AppColors.navy,
                     fontSize: 22,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 12),
-                if (_loadingAvailability)
+                // Keep the grid mounted during refresh so scrolling and the
+                // selected range survive the periodic availability check.
+                if (_loadingAvailability && _serverSlots.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 36),
                     child: Center(child: CircularProgressIndicator()),
@@ -459,13 +452,13 @@ class _BookingPageState extends State<BookingPage> {
                   _BookingSummary(
                     start: bookingStart,
                     end: bookingEnd,
-                    hours: _selectedSlots.length,
+                    hours: _selectedSlots.length / 2,
                   ),
                 ],
                 const SizedBox(height: 16),
                 if (_coupons.isNotEmpty) ...[
                   DropdownButtonFormField<String?>(
-                    initialValue: _couponId,
+                    value: _couponId,
                     decoration: InputDecoration(
                       labelText: tr('Discount coupon', 'كوبون الخصم'),
                       border: OutlineInputBorder(
@@ -480,27 +473,23 @@ class _BookingPageState extends State<BookingPage> {
                       ..._coupons.map(
                         (coupon) => DropdownMenuItem<String?>(
                           value: coupon['id'] as String,
-                          child: Text(tr('OMR 1 coupon', 'كوبون 1 ر.ع')),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(tr('Coupon', 'كوبون')),
+                              const SizedBox(width: 6),
+                              OmrPrice(value: coupon['value_omr'] as num? ?? 0),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                     onChanged:
-                        _saving ? null : (value) => setState(() => _couponId = value),
+                        _saving
+                            ? null
+                            : (value) => setState(() => _couponId = value),
                   ),
                   const SizedBox(height: 16),
-                ],
-                _WaterCartonSelector(
-                  quantity: _waterCartons,
-                  onChanged:
-                      _saving
-                          ? null
-                          : (value) => setState(() => _waterCartons = value),
-                ),
-                if (_waterCartons > 0 || _couponId != null) ...[
-                  const SizedBox(height: 10),
-                  _BookingTotal(
-                    total: _couponId == null ? _total : (_total - 1).clamp(0, double.infinity),
-                  ),
                 ],
                 const SizedBox(height: 18),
                 FilledButton(
@@ -514,6 +503,7 @@ class _BookingPageState extends State<BookingPage> {
                   ),
                   onPressed:
                       _saving ||
+                              _checkingSelection ||
                               _loadingAvailability ||
                               selectedDate == null ||
                               _selectedSlots.isEmpty
@@ -532,7 +522,7 @@ class _BookingPageState extends State<BookingPage> {
                             tr('Continue booking', 'متابعة الحجز'),
                             style: const TextStyle(
                               fontSize: 18,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                 ),
@@ -571,7 +561,7 @@ class _BookingHeader extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 28,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -616,12 +606,13 @@ class _MonthCalendar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final arabic = context.isArabic;
-    final today = DateUtils.dateOnly(DateTime.now());
-    final currentMonth = DateTime(today.year, today.month);
-    final lastMonth = DateTime(today.year, today.month + 12);
+    final today = omanDateOnly(toOmanTime(DateTime.now()));
+    final currentMonth = DateTime.utc(today.year, today.month);
+    final lastMonth = DateTime.utc(today.year, today.month + 12);
     final firstWeekday = arabic ? DateTime.saturday : DateTime.sunday;
     final offset = (visibleMonth.weekday - firstWeekday + 7) % 7;
-    final dayCount = DateTime(visibleMonth.year, visibleMonth.month + 1, 0).day;
+    final dayCount =
+        DateTime.utc(visibleMonth.year, visibleMonth.month + 1, 0).day;
     final requiredCells = offset + dayCount;
     final cellCount = ((requiredCells + 6) ~/ 7) * 7;
     final weekdays =
@@ -676,7 +667,7 @@ class _MonthCalendar extends StatelessWidget {
                     style: const TextStyle(
                       color: AppColors.navy,
                       fontSize: 23,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -735,7 +726,7 @@ class _MonthCalendar extends StatelessWidget {
                 if (dayNumber < 1 || dayNumber > dayCount) {
                   return const SizedBox.shrink();
                 }
-                final date = DateTime(
+                final date = DateTime.utc(
                   visibleMonth.year,
                   visibleMonth.month,
                   dayNumber,
@@ -802,7 +793,7 @@ class _CalendarDay extends StatelessWidget {
                       ? const Color(0x61000000)
                       : AppColors.navy,
               fontSize: 15,
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
           if (selected)
@@ -907,7 +898,7 @@ class _BookingTimeBox extends StatelessWidget {
                     const Icon(
                       Icons.lock_outline_rounded,
                       size: 17,
-                      color: Color(0x99000000),
+                      color: Color(0xFF607184),
                     ),
                     const SizedBox(height: 2),
                   ],
@@ -919,10 +910,10 @@ class _BookingTimeBox extends StatelessWidget {
                           selected
                               ? Colors.white
                               : booked
-                              ? const Color(0x99000000)
+                              ? const Color(0xFF607184)
                               : AppColors.navy,
                       fontSize: 17,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   if (booked) ...[
@@ -930,7 +921,7 @@ class _BookingTimeBox extends StatelessWidget {
                     Text(
                       tr('Booked', 'محجوز'),
                       style: const TextStyle(
-                        color: Color(0x99000000),
+                        color: Color(0xFF607184),
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
                       ),
@@ -973,7 +964,7 @@ class _BookingSummary extends StatelessWidget {
 
   final DateTime start;
   final DateTime end;
-  final int hours;
+  final double hours;
 
   @override
   Widget build(BuildContext context) {
@@ -1001,7 +992,7 @@ class _BookingSummary extends StatelessWidget {
         style: const TextStyle(
           color: AppColors.navy,
           fontSize: 16,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -1023,7 +1014,7 @@ class _TimePrompt extends StatelessWidget {
     child: Text(
       text,
       textAlign: TextAlign.center,
-      style: const TextStyle(color: Color(0x99000000)),
+      style: const TextStyle(color: Color(0xFF607184)),
     ),
   );
 }
@@ -1084,14 +1075,6 @@ String _monthTitle(DateTime month, bool arabic) {
   return '$name ${month.year}';
 }
 
-(int, int) _parseArenaTime(String? value) {
-  if (value == null || value.trim().isEmpty) return (0, 0);
-  final parts = value.split(':');
-  final hour = int.tryParse(parts.first) ?? 0;
-  final minute = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
-  return (hour.clamp(0, 23), minute.clamp(0, 59));
-}
-
 String _bookingError(String message) {
   final normalized = message.toLowerCase();
   if (normalized.contains('already booked') ||
@@ -1114,90 +1097,14 @@ String _bookingError(String message) {
       'هذا الملعب غير متاح للجنس المحدد في ملفك الشخصي.',
     );
   }
+  if (normalized.contains('arena_closed_for_range')) {
+    return tr(
+      'The arena is closed during part of the selected time.',
+      'الملعب مغلق خلال جزء من الوقت المختار.',
+    );
+  }
   return tr(
     'Could not save the booking. Please choose another time and try again.',
     'تعذر حفظ الحجز. اختر وقتًا آخر ثم حاول مجددًا.',
-  );
-}
-
-class _WaterCartonSelector extends StatelessWidget {
-  const _WaterCartonSelector({required this.quantity, required this.onChanged});
-
-  final int quantity;
-  final ValueChanged<int>? onChanged;
-
-  void _changeBy(int delta) {
-    final callback = onChanged;
-    if (callback != null) callback(quantity + delta);
-  }
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: const Color(0x180D2946)),
-    ),
-    child: Row(
-      children: [
-        const Icon(Icons.water_drop_outlined, color: AppColors.navy),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                tr('Add water cartons?', 'هل تريد إضافة ماء؟'),
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              Text(
-                tr('OMR 0.500 per carton', '0.500 ر.ع لكل كرتون'),
-                style: const TextStyle(color: Color(0x99000000), fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          onPressed:
-              quantity == 0 || onChanged == null
-                  ? null
-                  : () => _changeBy(-1),
-          icon: const Icon(Icons.remove_circle_outline),
-        ),
-        Text(
-          '$quantity',
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-        ),
-        IconButton(
-          onPressed: onChanged == null ? null : () => _changeBy(1),
-          icon: const Icon(Icons.add_circle_outline),
-        ),
-      ],
-    ),
-  );
-}
-
-class _BookingTotal extends StatelessWidget {
-  const _BookingTotal({required this.total});
-
-  final num total;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      Text(
-        tr('Booking total', 'إجمالي الحجز'),
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
-      OmrPrice(
-        value: total,
-        style: const TextStyle(
-          color: AppColors.navy,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    ],
   );
 }

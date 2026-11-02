@@ -1,3 +1,4 @@
+import '../../../core/services/validated_image_upload.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -55,6 +56,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
               .select('username, display_name, avatar_url, bio, city, gender')
               .eq('id', user.id)
               .maybeSingle();
+      if (!mounted) return;
       final display = (profile?['display_name'] as String? ?? '').trim().split(
         RegExp(r'\s+'),
       );
@@ -74,6 +76,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       avatarUrl = profile?['avatar_url'] as String?;
       gender = profile?['gender'] as String? ?? metadata['gender'] as String?;
     } catch (_) {
+      if (!mounted) return;
       username.text = metadata['username'] as String? ?? '';
       firstName.text = metadata['first_name'] as String? ?? '';
       lastName.text = metadata['last_name'] as String? ?? '';
@@ -104,19 +107,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
       var uploadedUrl = avatarUrl;
       final selectedImage = pickedImage;
       if (selectedImage != null) {
-        final extension =
-            selectedImage.name.contains('.')
-                ? selectedImage.name.split('.').last
-                : 'jpg';
-        final path = '${user.id}/avatar.$extension';
-        await client.storage
-            .from('avatars')
-            .upload(
-              path,
-              File(selectedImage.path),
-              fileOptions: const FileOptions(upsert: true),
-            );
-        uploadedUrl = client.storage.from('avatars').getPublicUrl(path);
+        final uploaded = await uploadValidatedImage(
+          bytes: await selectedImage.readAsBytes(),
+          bucket: 'avatars',
+        );
+        uploadedUrl = uploaded['publicUrl'] as String;
       }
       final data = {
         'username': username.text.trim(),
@@ -131,6 +126,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
           .from('profiles')
           .update({
             'username': username.text.trim(),
+            'first_name': firstName.text.trim(),
+            'last_name': lastName.text.trim(),
             'display_name':
                 '${firstName.text.trim()} ${lastName.text.trim()}'.trim(),
             'bio': bio.text.trim(),
@@ -215,7 +212,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         children: [
                           CircleAvatar(
                             radius: 72,
-                            backgroundColor: const Color(0xFFFFFDF8),
+                            backgroundColor: const Color(0xFFF4F7F9),
                             backgroundImage: _profileImage(),
                             child:
                                 pickedImage == null && avatarUrl == null
@@ -227,7 +224,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                                     : null,
                           ),
                           Material(
-                            color: const Color(0x52000000),
+                            color: const Color(0xFFDCE3E9),
                             shape: const CircleBorder(),
                             child: IconButton(
                               onPressed: _pick,
@@ -249,7 +246,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     const SizedBox(height: 8),
                     Text(
                       tr('Gender', 'الجنس'),
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 8),
                     SegmentedButton<String>(
@@ -300,7 +297,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                                 dimension: 22,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Color(0xFFFFFDF8),
+                                  color: Color(0xFFF4F7F9),
                                 ),
                               )
                               : Text(tr('Save', 'حفظ')),

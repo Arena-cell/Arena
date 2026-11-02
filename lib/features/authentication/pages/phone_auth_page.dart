@@ -1,19 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/services/phone_auth_config.dart';
+import '../../../core/constants/supabase.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/services/guest_session.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/oman_phone.dart';
+import '../../../main.dart';
 import '../../navigation/main_navigation_page.dart';
-import '../../onboarding/location_permission_page.dart';
 
-enum PhoneAuthMode { signIn, createAccount }
+import 'profile_completion_page.dart';
 
 class PhoneAuthPage extends StatefulWidget {
-  const PhoneAuthPage({super.key, required this.mode});
-
-  final PhoneAuthMode mode;
+  const PhoneAuthPage({super.key});
 
   @override
   State<PhoneAuthPage> createState() => _PhoneAuthPageState();
@@ -22,47 +24,34 @@ class PhoneAuthPage extends StatefulWidget {
 class _PhoneAuthPageState extends State<PhoneAuthPage> {
   final _phone = TextEditingController();
   final _otp = TextEditingController();
-  final _username = TextEditingController();
-  final _firstName = TextEditingController();
-  final _lastName = TextEditingController();
   int _step = 0;
   bool _loading = false;
-  String? _gender;
   String? _error;
   String? _normalizedPhone;
+  Timer? _resendTimer;
+  int _resendSeconds = 0;
 
-  bool get _creating => widget.mode == PhoneAuthMode.createAccount;
+  final _config = PhoneAuthConfig.build(supabaseUrl);
 
   @override
   void dispose() {
-    for (final controller in [
-      _phone,
-      _otp,
-      _username,
-      _firstName,
-      _lastName,
-    ]) {
+    _resendTimer?.cancel();
+    for (final controller in [_phone, _otp]) {
       controller.dispose();
     }
     super.dispose();
   }
 
-  String? _normalizeOmanPhone(String input) {
-    var value = input.replaceAll(RegExp(r'[\s\-()]'), '');
-    if (value.startsWith('00')) value = '+${value.substring(2)}';
-    if (value.startsWith('968') && !value.startsWith('+')) value = '+$value';
-    if (RegExp(r'^\d{8}$').hasMatch(value)) value = '+968$value';
-    return RegExp(r'^\+968\d{8}$').hasMatch(value) ? value : null;
-  }
-
   Future<void> _sendCode() async {
-    final phone = _normalizeOmanPhone(_phone.text.trim());
+    if (_loading) return;
+    final phone = normalizeOmanPhone(_phone.text.trim());
     if (phone == null) {
       setState(
-        () => _error = tr(
-          'Enter a valid Oman mobile number.',
-          'أدخل رقم هاتف عمانيًا صحيحًا.',
-        ),
+        () =>
+            _error = tr(
+              'Enter a valid Oman mobile number.',
+              'أدخل رقم هاتف عمانيًا صحيحًا.',
+            ),
       );
       return;
     }
@@ -71,31 +60,44 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       _error = null;
     });
     try {
-      await Supabase.instance.client.auth.signInWithOtp(
-        phone: phone,
-        shouldCreateUser: _creating,
-      );
+      _config.checkPhone(phone);
+      await Supabase.instance.client.auth
+          .signInWithOtp(phone: phone, shouldCreateUser: true)
+          .timeout(const Duration(seconds: 25));
       if (!mounted) return;
       setState(() {
         _normalizedPhone = phone;
         _step = 1;
       });
+      _startResendCooldown();
     } on AuthException catch (error) {
       if (mounted) setState(() => _error = _authError(error.message));
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error = tr(
+                'Could not send a code. Check the connection and test-phone configuration.',
+                'تعذر إرسال الرمز. تحقق من الاتصال وإعداد رقم الاختبار.',
+              ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _verifyCode() async {
+    if (_loading) return;
     final phone = _normalizedPhone;
     final token = _otp.text.trim();
     if (phone == null || !RegExp(r'^\d{6}$').hasMatch(token)) {
       setState(
-        () => _error = tr(
-          'Enter the 6-digit verification code.',
-          'أدخل رمز التحقق المكوّن من 6 أرقام.',
-        ),
+        () =>
+            _error = tr(
+              'Enter the 6-digit verification code.',
+              'أدخل رمز التحقق المكوّن من 6 أرقام.',
+            ),
       );
       return;
     }
@@ -104,105 +106,94 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       _error = null;
     });
     try {
-      final response = await Supabase.instance.client.auth.verifyOTP(
-        phone: phone,
-        token: token,
-        type: OtpType.sms,
-      );
+      final response = await Supabase.instance.client.auth
+          .verifyOTP(
+            phone: phone,
+            token: _config.verificationToken(phone, token),
+            type: OtpType.sms,
+          )
+          .timeout(const Duration(seconds: 25));
       if (response.user == null) throw const AuthException('OTP_FAILED');
       await GuestSession.disable();
-      final profile = await Supabase.instance.client
-          .from('profiles')
-          .select('username,first_name,last_name,gender,onboarding_complete')
-          .eq('id', response.user?.id ?? '')
-          .maybeSingle();
+      final complete = await Supabase.instance.client
+          .rpc('my_profile_complete')
+          .timeout(const Duration(seconds: 20));
       if (!mounted) return;
-      final needsProfile =
-          _creating ||
-          profile?['username'] == null ||
-          profile?['gender'] == null ||
-          profile?['onboarding_complete'] != true;
-      if (needsProfile) {
-        setState(() => _step = 2);
+      if (complete != true) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => const ProfileCompletionPage(),
+          ),
+          (_) => false,
+        );
       } else {
         await _finishLogin();
       }
     } on AuthException catch (error) {
       if (mounted) setState(() => _error = _authError(error.message));
-    } on PostgrestException {
-      if (mounted) setState(() => _step = 2);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error = tr(
+                'Could not verify the account. Check your connection and retry.',
+                'تعذر التحقق من الحساب. تحقق من الاتصال وحاول مجدداً.',
+              ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _saveProfile() async {
-    final username = _username.text.trim().toLowerCase();
-    final firstName = _firstName.text.trim();
-    final lastName = _lastName.text.trim();
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    if (!RegExp(r'^[a-z][a-z0-9_]{3,}$').hasMatch(username) ||
-        firstName.isEmpty ||
-        lastName.isEmpty ||
-        _gender == null) {
-      setState(
-        () => _error = tr(
-          'Complete your name, username, and gender.',
-          'أكمل الاسم واسم المستخدم والجنس.',
-        ),
-      );
-      return;
-    }
+  void _startResendCooldown() {
+    _resendTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _resendSeconds = 30);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_resendSeconds <= 1) {
+        timer.cancel();
+        setState(() => _resendSeconds = 0);
+      } else {
+        setState(() => _resendSeconds--);
+      }
+    });
+  }
+
+  Future<void> _finishLogin() async {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const MainNavigationPage()),
+      (_) => false,
+    );
+  }
+
+  Future<void> _continueAsGuest() async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final metadata = {
-        'username': username,
-        'first_name': firstName,
-        'last_name': lastName,
-        'gender': _gender,
-      };
-      await Supabase.instance.client.auth.updateUser(
-        UserAttributes(data: metadata),
-      );
-      await Supabase.instance.client.from('profiles').upsert({
-        'id': user.id,
-        ...metadata,
-        'display_name': '$firstName $lastName'.trim(),
-        'onboarding_complete': true,
-      });
-      if (!mounted) return;
+      await GuestSession.enable();
       await _finishLogin();
-    } on PostgrestException catch (error) {
-      if (!mounted) return;
-      setState(
-        () => _error = error.code == '23505'
-            ? tr('This username is already used.', 'اسم المستخدم مستخدم بالفعل.')
-            : tr('Could not save your profile.', 'تعذر حفظ ملفك الشخصي.'),
-      );
-    } on AuthException catch (error) {
-      if (mounted) setState(() => _error = _authError(error.message));
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error = tr(
+                'Could not start guest browsing. Try again.',
+                'تعذر بدء التصفح كضيف. حاول مجددًا.',
+              ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _finishLogin() async {
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    final locationSeen =
-        preferences.getBool(LocationPermissionPage.seenKey) ?? false;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(
-        builder: (_) => locationSeen
-            ? const MainNavigationPage()
-            : const LocationPermissionPage(),
-      ),
-      (_) => false,
-    );
   }
 
   @override
@@ -210,23 +201,42 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     backgroundColor: AppColors.background,
     appBar: AppBar(
       backgroundColor: AppColors.background,
-      title: Text(
-        _creating ? tr('Create account', 'إنشاء حساب') : tr('Sign in', 'تسجيل الدخول'),
-      ),
+      title: Text(tr('Welcome to Arena', 'مرحبًا بك في أرينا')),
+      actions: [
+        TextButton(
+          onPressed:
+              _loading
+                  ? null
+                  : () =>
+                      setAppLanguage(appLanguage.value == 'ar' ? 'en' : 'ar'),
+          child: Text(appLanguage.value == 'ar' ? 'English' : 'العربية'),
+        ),
+      ],
     ),
     body: SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
         children: [
-          Image.asset('assets/images/arena_logo_transparent.png', height: 116),
+          Image.asset(
+            'assets/images/arena_splash_logo.png',
+            height: 180,
+            fit: BoxFit.contain,
+            semanticLabel: 'Arena',
+          ),
           const SizedBox(height: 28),
+          if (_config.developmentOtp)
+            Text(
+              tr(
+                'Development test phone only — any 6 digits are accepted by this test screen.',
+                'وضع تطوير لرقم الاختبار فقط — أدخل أي 6 أرقام في هذه الشاشة.',
+              ),
+            ),
           if (_step == 0) _phoneStep(),
           if (_step == 1) _otpStep(),
-          if (_step == 2) _profileStep(),
           if (_error != null) ...[
             const SizedBox(height: 14),
             Text(
-              _error as String,
+              _error ?? '',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.red),
             ),
@@ -241,10 +251,15 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     children: [
       Text(
         tr('Enter your mobile number', 'أدخل رقم هاتفك'),
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
-      Text(tr('We will send a verification code by SMS.', 'سنرسل رمز تحقق عبر رسالة نصية.')),
+      Text(
+        tr(
+          'We will verify your number by SMS. If you are new, you will complete your details next.',
+          'سنتحقق من رقمك برسالة نصية. إذا كنت مستخدمًا جديدًا، ستكمل بياناتك بعدها.',
+        ),
+      ),
       const SizedBox(height: 22),
       TextField(
         controller: _phone,
@@ -259,7 +274,16 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       const SizedBox(height: 20),
       FilledButton(
         onPressed: _loading ? null : _sendCode,
-        child: Text(_loading ? tr('Sending...', 'جارٍ الإرسال...') : tr('Send code', 'إرسال الرمز')),
+        child: Text(
+          _loading
+              ? tr('Sending...', 'جارٍ الإرسال...')
+              : tr('Send code', 'إرسال الرمز'),
+        ),
+      ),
+      const SizedBox(height: 12),
+      OutlinedButton(
+        onPressed: _loading ? null : _continueAsGuest,
+        child: Text(tr('Continue as guest', 'الدخول كضيف')),
       ),
     ],
   );
@@ -269,10 +293,12 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     children: [
       Text(
         tr('Verification code', 'رمز التحقق'),
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
-      Text('${tr('Code sent to', 'تم إرسال الرمز إلى')} ${_normalizedPhone ?? ''}'),
+      Text(
+        '${tr('Code sent to', 'تم إرسال الرمز إلى')} ${_normalizedPhone ?? ''}',
+      ),
       const SizedBox(height: 22),
       TextField(
         controller: _otp,
@@ -287,52 +313,24 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       const SizedBox(height: 12),
       FilledButton(
         onPressed: _loading ? null : _verifyCode,
-        child: Text(_loading ? tr('Verifying...', 'جارٍ التحقق...') : tr('Verify', 'تحقق')),
+        child: Text(
+          _loading
+              ? tr('Verifying...', 'جارٍ التحقق...')
+              : tr('Verify', 'تحقق'),
+        ),
       ),
       TextButton(
-        onPressed: _loading ? null : _sendCode,
-        child: Text(tr('Resend code', 'إعادة إرسال الرمز')),
+        onPressed: _loading || _resendSeconds > 0 ? null : _sendCode,
+        child: Text(
+          _resendSeconds > 0
+              ? tr(
+                'Resend in $_resendSeconds s',
+                'إعادة الإرسال بعد $_resendSeconds ث',
+              )
+              : tr('Resend code', 'إعادة إرسال الرمز'),
+        ),
       ),
     ],
-  );
-
-  Widget _profileStep() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Text(
-        tr('Complete your account', 'أكمل بيانات حسابك'),
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
-      ),
-      const SizedBox(height: 20),
-      _field(_username, tr('Username', 'اسم المستخدم')),
-      _field(_firstName, tr('First name', 'الاسم الأول')),
-      _field(_lastName, tr('Last name', 'اسم العائلة')),
-      const SizedBox(height: 6),
-      SegmentedButton<String>(
-        segments: [
-          ButtonSegment(value: 'men', label: Text(tr('Male', 'ذكر'))),
-          ButtonSegment(value: 'women', label: Text(tr('Female', 'أنثى'))),
-        ],
-        selected: _gender == null ? const <String>{} : <String>{_gender as String},
-        emptySelectionAllowed: true,
-        onSelectionChanged: (selection) {
-          setState(() => _gender = selection.isEmpty ? null : selection.first);
-        },
-      ),
-      const SizedBox(height: 22),
-      FilledButton(
-        onPressed: _loading ? null : _saveProfile,
-        child: Text(_loading ? tr('Saving...', 'جارٍ الحفظ...') : tr('Continue', 'متابعة')),
-      ),
-    ],
-  );
-
-  Widget _field(TextEditingController controller, String label) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: TextField(
-      controller: controller,
-      decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
-    ),
   );
 
   String _authError(String message) {
@@ -340,12 +338,18 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     if (normalized.contains('provider') || normalized.contains('sms')) {
       return tr(
         'Phone sign-in is not configured in Supabase yet.',
-        'تسجيل الدخول بالهاتف غير مفعّل في Supabase بعد.',
+        'تسجيل الدخول بالهاتف غير مفعّل في خدمة المصادقة بعد.',
       );
     }
     if (normalized.contains('expired') || normalized.contains('invalid')) {
-      return tr('The verification code is invalid or expired.', 'رمز التحقق غير صحيح أو منتهي.');
+      return tr(
+        'The verification code is invalid or expired.',
+        'رمز التحقق غير صحيح أو منتهي.',
+      );
     }
-    return tr('Authentication failed. Try again.', 'تعذر تسجيل الدخول. حاول مجددًا.');
+    return tr(
+      'Authentication failed. Try again.',
+      'تعذر تسجيل الدخول. حاول مجددًا.',
+    );
   }
 }

@@ -8,6 +8,7 @@ import '../../../core/services/production_repository.dart';
 import '../../../core/services/guest_session.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/omr_currency.dart';
+import '../../../core/utils/oman_time.dart';
 import '../../explore/pages/game_filters_sheet.dart';
 import 'create_game_page.dart';
 import 'match_details_page.dart';
@@ -20,7 +21,7 @@ class GamesPage extends StatefulWidget {
 }
 
 class _GamesPageState extends State<GamesPage> {
-  static const _background = Color(0xFFFFFDF8);
+  static const _background = Color(0xFFF4F7F9);
   final _searchController = TextEditingController();
   late Future<List<Map<String, dynamic>>> _matches;
   late DateTime _today;
@@ -32,7 +33,7 @@ class _GamesPageState extends State<GamesPage> {
   @override
   void initState() {
     super.initState();
-    _today = DateUtils.dateOnly(DateTime.now());
+    _today = DateUtils.dateOnly(toOmanTime(DateTime.now()));
     _selectedDate = _today;
     _matches = _loadMatches();
     _matchesChannel =
@@ -52,8 +53,9 @@ class _GamesPageState extends State<GamesPage> {
   @override
   void dispose() {
     _dayTimer?.cancel();
-    if (_matchesChannel != null) {
-      ProductionRepository.client.removeChannel(_matchesChannel!);
+    final channel = _matchesChannel;
+    if (channel != null) {
+      ProductionRepository.client.removeChannel(channel);
     }
     _searchController.dispose();
     super.dispose();
@@ -86,14 +88,19 @@ class _GamesPageState extends State<GamesPage> {
 
   void _scheduleDateRefresh() {
     _dayTimer?.cancel();
-    final now = DateTime.now();
-    final midnight = DateTime(now.year, now.month, now.day + 1);
+    final now = DateTime.now().toUtc();
+    final omanNow = toOmanTime(now);
+    final midnight = DateTime.utc(
+      omanNow.year,
+      omanNow.month,
+      omanNow.day + 1,
+    ).subtract(const Duration(hours: 4));
     _dayTimer = Timer(
       midnight.difference(now) + const Duration(seconds: 1),
       () {
         if (!mounted) return;
         setState(() {
-          _today = DateUtils.dateOnly(DateTime.now());
+          _today = DateUtils.dateOnly(toOmanTime(DateTime.now()));
           if (_selectedDate.isBefore(_today)) _selectedDate = _today;
           _matches = _loadMatches();
         });
@@ -105,8 +112,10 @@ class _GamesPageState extends State<GamesPage> {
   List<Map<String, dynamic>> _filtered(List<Map<String, dynamic>> matches) {
     final query = _searchController.text.trim().toLowerCase();
     return matches.where((match) {
-      final startsAt =
-          DateTime.tryParse(match['starts_at'] as String? ?? '')?.toLocal();
+      final parsedStart = DateTime.tryParse(
+        match['starts_at'] as String? ?? '',
+      );
+      final startsAt = parsedStart == null ? null : toOmanTime(parsedStart);
       if (startsAt == null || !DateUtils.isSameDay(startsAt, _selectedDate)) {
         return false;
       }
@@ -151,7 +160,7 @@ class _GamesPageState extends State<GamesPage> {
     if (!mounted) return;
     final sport = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: const Color(0xFFFFFDF8),
+      backgroundColor: const Color(0xFFF4F7F9),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -166,7 +175,7 @@ class _GamesPageState extends State<GamesPage> {
                     tr('Choose sport', 'اختر الرياضة'),
                     style: const TextStyle(
                       fontSize: 23,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   ListTile(
@@ -228,22 +237,22 @@ class _GamesPageState extends State<GamesPage> {
                         decoration: InputDecoration(
                           hintText: tr('Seeb, Muscat', 'السيب، مسقط'),
                           hintStyle: const TextStyle(
-                            color: Color(0x99000000),
+                            color: Color(0xFF607184),
                             fontWeight: FontWeight.w500,
                           ),
                           prefixIcon: const Icon(
                             Icons.search_rounded,
                             size: 20,
-                            color: Color(0x99000000),
+                            color: Color(0xFF607184),
                           ),
                           filled: true,
-                          fillColor: const Color(0xFFFFFDF8),
+                          fillColor: const Color(0xFFF4F7F9),
                           contentPadding: EdgeInsets.zero,
                           border: _searchBorder,
                           enabledBorder: _searchBorder,
                           focusedBorder: _searchBorder.copyWith(
                             borderSide: const BorderSide(
-                              color: Color(0x99000000),
+                              color: Color(0xFF607184),
                             ),
                           ),
                         ),
@@ -327,7 +336,7 @@ class _GamesPageState extends State<GamesPage> {
                   style: const TextStyle(
                     color: Color(0xFF0D2946),
                     fontSize: 21,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -385,7 +394,7 @@ class _GamesPageState extends State<GamesPage> {
 
   static final _searchBorder = OutlineInputBorder(
     borderRadius: BorderRadius.circular(16),
-    borderSide: const BorderSide(color: Color(0x52000000)),
+    borderSide: const BorderSide(color: Color(0xFFDCE3E9)),
   );
 }
 
@@ -406,12 +415,12 @@ class _DateTile extends StatelessWidget {
     width: width,
     height: 47,
     child: Material(
-      color: selected ? const Color(0xFFFFFDF8) : Colors.transparent,
+      color: selected ? const Color(0xFFF4F7F9) : Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side:
             selected
-                ? const BorderSide(color: Color(0x99000000))
+                ? const BorderSide(color: Color(0xFF607184))
                 : BorderSide.none,
       ),
       child: InkWell(
@@ -460,18 +469,20 @@ class _GameCard extends StatelessWidget {
             .where((player) => player is Map && player['status'] == 'joined')
             .length;
     final maxPlayers = (match['max_players'] as num?)?.toInt() ?? 0;
-    final startsAt = DateTime.parse(match['starts_at'] as String).toLocal();
+    final startsAt = DateTime.parse(match['starts_at'] as String);
     final sport = '${match['sport'] ?? ''}'.trim();
     final isPadel = sport.toLowerCase() == 'padel' || sport == 'بادل';
     final accent = isPadel ? AppColors.navy : AppColors.brandGreenMedium;
     final surface = isPadel ? const Color(0xFFF0F5FA) : const Color(0xFFF3F8E8);
-    final host = '${profile['username'] ?? 'host'}'.trim();
+    final host =
+        '${profile['first_name'] ?? profile['display_name'] ?? tr('Host', 'المضيف')}'
+            .trim();
     final price = match['price_per_player'] as num? ?? 0;
     final id = match['id']?.toString().trim() ?? '';
     final avatarUrl = profile['avatar_url'] as String?;
 
-    return SizedBox(
-      height: 165,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 165),
       child: Material(
         color: surface,
         elevation: 0,
@@ -504,6 +515,7 @@ class _GameCard extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(17, 14, 17, 11),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -531,7 +543,7 @@ class _GameCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 14,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           color: Color(0xFF000000),
                         ),
                       ),
@@ -554,7 +566,7 @@ class _GameCard extends StatelessWidget {
                     const SizedBox(width: 7),
                     Expanded(
                       child: Text(
-                        '${_gameFormat(match)} ${tr('By', 'بواسطة')} @$host',
+                        '${_gameFormat(match)} ${tr('By', 'بواسطة')} $host',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -570,13 +582,13 @@ class _GameCard extends StatelessWidget {
                         vertical: 5,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFFDF8),
+                        color: const Color(0xFFF4F7F9),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Text(
                         '$joined/$maxPlayers',
                         style: const TextStyle(
-                          color: Color(0x99000000),
+                          color: Color(0xFF607184),
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -622,19 +634,22 @@ class _HostAvatar extends StatelessWidget {
   const _HostAvatar({this.url});
   final String? url;
   @override
-  Widget build(BuildContext context) => CircleAvatar(
-    radius: 11,
-    backgroundColor: const Color(0xFF000000),
-    backgroundImage: url == null || url!.isEmpty ? null : NetworkImage(url!),
-    child:
-        url == null || url!.isEmpty
-            ? const Icon(
-              Icons.person_rounded,
-              size: 13,
-              color: Color(0xFFFFFDF8),
-            )
-            : null,
-  );
+  Widget build(BuildContext context) {
+    final imageUrl = url?.trim() ?? '';
+    return CircleAvatar(
+      radius: 11,
+      backgroundColor: const Color(0xFF000000),
+      backgroundImage: imageUrl.isEmpty ? null : NetworkImage(imageUrl),
+      child:
+          imageUrl.isEmpty
+              ? const Icon(
+                Icons.person_rounded,
+                size: 13,
+                color: Color(0xFFF4F7F9),
+              )
+              : null,
+    );
+  }
 }
 
 class _Tag extends StatelessWidget {
@@ -687,13 +702,13 @@ class _GamesState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 52, color: const Color(0x99000000)),
+              Icon(icon, size: 52, color: const Color(0xFF607184)),
               const SizedBox(height: 12),
               Text(
                 title,
                 style: const TextStyle(
                   fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF000000),
                 ),
               ),
@@ -702,7 +717,7 @@ class _GamesState extends StatelessWidget {
                 subtitle,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Color(0x99000000),
+                  color: Color(0xFF607184),
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -726,9 +741,7 @@ String _gameFormat(Map<String, dynamic> match) {
 }
 
 String _time(DateTime value) {
-  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-  final period = value.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${value.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(value);
 }
 
 String _weekday(int weekday) =>

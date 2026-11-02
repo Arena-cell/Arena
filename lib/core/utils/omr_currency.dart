@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../localization/app_localizations.dart';
+
 double normalizeOmrPrice(num value) {
   final amount = value.toDouble();
   final nearestRial = amount.roundToDouble();
@@ -26,7 +28,7 @@ class OmrSymbol extends StatelessWidget {
     fit: BoxFit.contain,
     color: color,
     colorBlendMode: color == null ? null : BlendMode.srcIn,
-    semanticLabel: 'Omani rial',
+    semanticLabel: tr('Omani rial', 'الريال العماني'),
   );
 }
 
@@ -57,9 +59,9 @@ class OmrPrice extends StatelessWidget {
         Text(formatOmr(value), style: effectiveStyle),
         const SizedBox(width: 5),
         OmrSymbol(size: size, color: effectiveStyle.color),
-        if (suffix != null) ...[
+        if (suffix case final nonNullSuffix?) ...[
           const SizedBox(width: 4),
-          Text(suffix!, style: effectiveStyle),
+          Text(nonNullSuffix, style: effectiveStyle),
         ],
       ],
     );

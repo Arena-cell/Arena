@@ -1,12 +1,13 @@
+import 'core/services/push_notification_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'features/navigation/main_navigation_page.dart';
-import 'features/authentication/pages/login_page.dart';
+
+import 'features/bookings/pages/payment_return_page.dart';
+import 'features/authentication/pages/welcome_page.dart';
 import 'features/authentication/pages/profile_completion_page.dart';
-import 'features/authentication/pages/verify_email_page.dart';
-import 'features/onboarding/location_permission_page.dart';
-import 'core/services/guest_session.dart';
+import 'core/services/account_access.dart';
+
 import 'core/theme/app_colors.dart';
 
 class SplashPage extends StatefulWidget {
@@ -18,7 +19,6 @@ class SplashPage extends StatefulWidget {
 
 class _SplashPageState extends State<SplashPage>
     with SingleTickerProviderStateMixin {
-  static const _minimumSplashDuration = Duration(seconds: 2);
   late final AnimationController _entranceController;
   late final Animation<double> _logoScale;
   late final Animation<double> _logoOpacity;
@@ -28,17 +28,19 @@ class _SplashPageState extends State<SplashPage>
     super.initState();
     _entranceController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1100),
+      duration: const Duration(milliseconds: 450),
     );
-    _logoScale = Tween<double>(begin: .72, end: 1).animate(
-      CurvedAnimation(parent: _entranceController, curve: Curves.easeOutBack),
+    _logoScale = Tween<double>(begin: .96, end: 1).animate(
+      CurvedAnimation(parent: _entranceController, curve: Curves.easeOutCubic),
     );
     _logoOpacity = CurvedAnimation(
       parent: _entranceController,
       curve: const Interval(0, .62, curve: Curves.easeOut),
     );
     _entranceController.forward();
-    checkLogin();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) checkLogin();
+    });
   }
 
   @override
@@ -47,73 +49,66 @@ class _SplashPageState extends State<SplashPage>
     super.dispose();
   }
 
+  String? _error;
   Future<void> checkLogin() async {
-    final splashDelay = Future<void>.delayed(_minimumSplashDuration);
-
-    if (!mounted) return;
-
-    final user = Supabase.instance.client.auth.currentUser;
-    var complete = false;
-    if (user != null && user.emailConfirmedAt != null) {
-      final profile =
-          await Supabase.instance.client
-              .from('profiles')
-              .select('onboarding_complete')
-              .eq('id', user.id)
-              .maybeSingle();
-      // Profile completion is server-side account data. Auth metadata is not a
-      // substitute for the required customer profile fields.
-      complete = profile?['onboarding_complete'] == true;
+    if (mounted) setState(() => _error = null);
+    try {
+      final client = Supabase.instance.client;
+      final user = client.auth.currentUser;
+      final validPhone =
+          user?.phoneConfirmedAt != null &&
+          RegExp(r'^\+?968\d{8}$').hasMatch(user?.phone ?? '');
+      final complete =
+          validPhone &&
+          await client
+                  .rpc('my_profile_complete')
+                  .timeout(const Duration(seconds: 20)) ==
+              true;
+      final destination = accountDestination(
+        hasSession: client.auth.currentSession != null,
+        phone: user?.phone,
+        phoneConfirmed: validPhone,
+        profileComplete: complete,
+      );
+      if (destination == AccountDestination.phone && user != null) {
+        await PushNotificationService.instance.deactivateCurrentToken();
+        await client.auth.signOut();
+      }
+      if (!mounted) return;
+      final Widget page = switch (destination) {
+        AccountDestination.phone => const WelcomePage(),
+        AccountDestination.completeProfile => const ProfileCompletionPage(),
+        AccountDestination.home => const PaymentReturnPage(),
+      };
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder<void>(
+          pageBuilder: (_, animation, secondaryAnimation) => page,
+          transitionDuration: const Duration(milliseconds: 240),
+          transitionsBuilder:
+              (_, animation, secondaryAnimation, child) =>
+                  FadeTransition(opacity: animation, child: child),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error =
+                  'تعذر التحقق من الحساب. Check your connection and retry.',
+        );
+      }
     }
-
-    if (!mounted) return;
-
-    final preferences = await SharedPreferences.getInstance();
-    final guestMode = await GuestSession.isEnabled();
-    final locationSeen =
-        preferences.getBool(LocationPermissionPage.seenKey) ?? false;
-    if (!mounted) return;
-
-    await splashDelay;
-    if (!mounted) return;
-
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder<void>(
-        transitionDuration: const Duration(milliseconds: 720),
-        pageBuilder:
-            (context, animation, secondaryAnimation) =>
-                user == null
-                    ? guestMode
-                        ? const MainNavigationPage()
-                        : const LoginPage()
-                    : user.emailConfirmedAt == null
-                    ? const VerifyEmailPage()
-                    : complete
-                    ? locationSeen
-                        ? const MainNavigationPage()
-                        : const LocationPermissionPage()
-                    : const ProfileCompletionPage(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          );
-          return FadeTransition(
-            opacity: curved,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: .985, end: 1).animate(curved),
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.navy,
+      appBar: AppBar(
+        toolbarHeight: 0,
+        backgroundColor: AppColors.navy,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+      ),
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -150,6 +145,16 @@ class _SplashPageState extends State<SplashPage>
                     ),
                   ),
                   const SizedBox(height: 30),
+                  if (_error != null) ...[
+                    Text(_error!, style: const TextStyle(color: Colors.white)),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: checkLogin,
+                      child: const Text('Retry / إعادة المحاولة'),
+                    ),
+                  ],
                   SizedBox(
                     width: 54,
                     child: LinearProgressIndicator(

@@ -13,7 +13,7 @@ void main() {
       final day = DateTime(2026, 8, 16);
       final slots = List.generate(
         6,
-        (index) => DateTime(day.year, day.month, day.day, index + 4),
+        (index) => DateTime.utc(day.year, day.month, day.day, 18, index * 30),
       );
 
       await tester.pumpWidget(

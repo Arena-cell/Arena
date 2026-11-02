@@ -1,6 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/booking_slot_selection.dart';
+import '../utils/arena_availability.dart';
+import '../utils/oman_time.dart';
 
 class ProductionRepository {
   ProductionRepository._();
@@ -15,19 +17,18 @@ class ProductionRepository {
     num? maxPrice,
     num? minimumRating,
   }) async {
-    // `is_active` was introduced after the original production schema and is
-    // not present in every deployed database. Keeping the public catalogue
-    // query compatible prevents the whole Explore page from failing there.
-    var query = client.from('arenas').select();
+    // Phase 1 requires the reviewed database migrations before app rollout.
+    var query = client.from('arenas').select().eq('is_active', true);
     final user = client.auth.currentUser;
     String? profileGender;
     if (user != null) {
       try {
-        final profile = await client
-            .from('profiles')
-            .select('gender')
-            .eq('id', user.id)
-            .maybeSingle();
+        final profile =
+            await client
+                .from('profiles')
+                .select('gender')
+                .eq('id', user.id)
+                .maybeSingle();
         final value = '${profile?['gender'] ?? ''}'.toLowerCase();
         if (value == 'men' || value == 'women') profileGender = value;
       } on PostgrestException {
@@ -64,9 +65,7 @@ class ProductionRepository {
     return arenas
         .where((arena) {
           final sports = (arena['sports'] as List?) ?? const [];
-          return sports.any(
-            (value) => _normalizedSport('$value') == requested,
-          );
+          return sports.any((value) => _normalizedSport('$value') == requested);
         })
         .skip(offset)
         .take(limit)
@@ -84,14 +83,19 @@ class ProductionRepository {
   }
 
   static Future<Map<String, dynamic>> arenaById(String arenaId) async {
-    var query = client.from('arenas').select().eq('id', arenaId);
+    var query = client
+        .from('arenas')
+        .select()
+        .eq('is_active', true)
+        .eq('id', arenaId);
     final userId = client.auth.currentUser?.id;
     if (userId != null) {
-      final profile = await client
-          .from('profiles')
-          .select('gender')
-          .eq('id', userId)
-          .maybeSingle();
+      final profile =
+          await client
+              .from('profiles')
+              .select('gender')
+              .eq('id', userId)
+              .maybeSingle();
       final gender = profile?['gender'] as String?;
       if (gender == 'men' || gender == 'women') {
         query = query.eq('audience_gender', gender ?? '');
@@ -100,6 +104,59 @@ class ProductionRepository {
     final row = await query.single();
     return Map<String, dynamic>.from(row);
   }
+
+  static Future<List<ArenaAvailabilitySlot>> arenaAvailability({
+    required String arenaId,
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    String day(DateTime v) =>
+        '${v.year.toString().padLeft(4, "0")}-${v.month.toString().padLeft(2, "0")}-${v.day.toString().padLeft(2, "0")}';
+    // A month contains up to 1,536 half-hour rows, exceeding PostgREST's
+    // default response limit. Fetch bounded windows rather than truncating
+    // the final days of the month into apparently unavailable dates.
+    final result = <ArenaAvailabilitySlot>[];
+    var cursor = DateTime.utc(from.year, from.month, from.day);
+    final end = DateTime.utc(to.year, to.month, to.day);
+    while (cursor.isBefore(end)) {
+      final weekEnd = cursor.add(const Duration(days: 7));
+      final next = weekEnd.isBefore(end) ? weekEnd : end;
+      final rows = await client
+          .rpc(
+            'arena_availability',
+            params: {
+              'p_arena_id': arenaId,
+              'p_from': day(cursor),
+              'p_to': day(next),
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+      result.addAll(
+        List<Map<String, dynamic>>.from(
+          rows as List,
+        ).map(ArenaAvailabilitySlot.fromJson),
+      );
+      cursor = next;
+    }
+    return result;
+  }
+
+  static Future<bool> rangeAvailable(
+    String arenaId,
+    DateTime start,
+    DateTime end,
+  ) async =>
+      await client
+          .rpc(
+            'arena_has_available_court',
+            params: {
+              'p_arena_id': arenaId,
+              'p_starts_at': omanWallToUtc(start).toIso8601String(),
+              'p_ends_at': omanWallToUtc(end).toIso8601String(),
+            },
+          )
+          .timeout(const Duration(seconds: 20)) ==
+      true;
 
   static Future<List<BookingInterval>> arenaBusyIntervals({
     required String arenaId,
@@ -130,17 +187,19 @@ class ProductionRepository {
     required String idempotencyKey,
     String? couponId,
   }) async {
-    final result = await client.rpc(
-      'create_arena_booking_with_coupon',
-      params: {
-        'p_arena_id': arenaId,
-        'p_starts_at': startsAt.toUtc().toIso8601String(),
-        'p_ends_at': endsAt.toUtc().toIso8601String(),
-        'p_water_cartons': waterCartons,
-        'p_idempotency_key': idempotencyKey,
-        'p_coupon_id': couponId,
-      },
-    );
+    final result = await client
+        .rpc(
+          'create_arena_booking_with_coupon',
+          params: {
+            'p_arena_id': arenaId,
+            'p_starts_at': omanWallToUtc(startsAt).toIso8601String(),
+            'p_ends_at': omanWallToUtc(endsAt).toIso8601String(),
+            'p_water_cartons': waterCartons,
+            'p_idempotency_key': idempotencyKey,
+            'p_coupon_id': couponId,
+          },
+        )
+        .timeout(const Duration(seconds: 25));
     final rows = List<Map<String, dynamic>>.from(result as List);
     if (rows.isEmpty) {
       throw PostgrestException(message: 'BOOKING_NOT_CREATED');
@@ -196,7 +255,7 @@ class ProductionRepository {
     if (uniqueIds.isEmpty) return {};
     try {
       final rows = await client
-          .from('profiles')
+          .from('public_profiles')
           .select('id, username, display_name, first_name, avatar_url')
           .inFilter('id', uniqueIds);
       return {
@@ -210,8 +269,13 @@ class ProductionRepository {
     }
   }
 
-  static Future<void> joinMatch(String matchId) =>
-      client.rpc('join_match', params: {'match_id': matchId});
+  static Future<String> joinMatch(String matchId) async {
+    final result = await client.rpc(
+      'request_match_join',
+      params: {'p_match_id': matchId},
+    );
+    return result?.toString() ?? 'joined';
+  }
 
   static Future<void> leaveMatch(String matchId) =>
       client.rpc('leave_match', params: {'match_id': matchId});
@@ -219,6 +283,15 @@ class ProductionRepository {
   static Future<void> invitePlayer(String matchId, String userId) => client.rpc(
     'join_match',
     params: {'match_id': matchId, 'target_user_id': userId},
+  );
+
+  static Future<void> respondToJoinRequest(
+    String matchId,
+    String userId, {
+    required bool accept,
+  }) => client.rpc(
+    'respond_match_join_request',
+    params: {'p_match_id': matchId, 'p_user_id': userId, 'p_accept': accept},
   );
 
   static Future<bool> isFavorite(String arenaId) async =>

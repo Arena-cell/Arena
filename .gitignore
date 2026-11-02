@@ -43,3 +43,19 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local server credentials. The example deliberately contains no values.
+supabase/functions/.env
+supabase/functions/.env.*
+!supabase/functions/.env.example
+
+# Firebase local configuration; never commit service account credentials.
+**/google-services.json
+**/GoogleService-Info.plist
+**/*service-account*.json
+
+# Private upload signing and local Supabase CLI metadata.
+**/*.jks
+**/*.keystore
+**/key.properties
+supabase/.temp/

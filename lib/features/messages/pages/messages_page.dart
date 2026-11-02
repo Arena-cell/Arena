@@ -1,14 +1,26 @@
+import '../../../core/services/validated_image_upload.dart';
+import 'dart:async';
+import '../widgets/private_chat_image.dart';
+
 import 'package:flutter/material.dart';
 import '../../../core/localization/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../core/utils/oman_time.dart';
 
 import '../../explore/pages/production_arena_details_page.dart';
 
 const _green = Color(0xFF000000);
 
 class MessagesPage extends StatefulWidget {
-  const MessagesPage({super.key});
+  const MessagesPage({
+    super.key,
+    this.initialConversationUserId,
+    this.initialGroupId,
+  });
+
+  final String? initialConversationUserId;
+  final String? initialGroupId;
   @override
   State<MessagesPage> createState() => _MessagesPageState();
 }
@@ -19,6 +31,64 @@ class _MessagesPageState extends State<MessagesPage> {
   void initState() {
     super.initState();
     _loader = _load();
+    if (widget.initialConversationUserId != null ||
+        widget.initialGroupId != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => unawaited(_openInitialConversation()),
+      );
+    }
+  }
+
+  Future<void> _openInitialConversation() async {
+    final directId = widget.initialConversationUserId?.trim() ?? '';
+    final groupId = widget.initialGroupId?.trim() ?? '';
+    try {
+      late final _Conversation conversation;
+      if (directId.isNotEmpty) {
+        final profile =
+            await Supabase.instance.client
+                .from('public_profiles')
+                .select('first_name,display_name')
+                .eq('id', directId)
+                .maybeSingle();
+        if (!mounted) return;
+        conversation = _Conversation(
+          id: directId,
+          name:
+              profile?['first_name'] as String? ??
+              profile?['display_name'] as String? ??
+              tr('Player', 'لاعب'),
+          message: '',
+          createdAt: DateTime.now(),
+        );
+      } else if (groupId.isNotEmpty) {
+        final group =
+            await Supabase.instance.client
+                .from('chat_groups')
+                .select('name')
+                .eq('id', groupId)
+                .maybeSingle();
+        if (!mounted || group == null) return;
+        conversation = _Conversation(
+          id: groupId,
+          name: '${group['name']}',
+          message: '',
+          createdAt: DateTime.now(),
+          group: true,
+        );
+      } else {
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _ChatPage(conversation: conversation),
+        ),
+      );
+      if (mounted) _refresh();
+    } on PostgrestException {
+      // The messages list remains available if a stale notification points to
+      // a conversation the signed-in user can no longer access.
+    }
   }
 
   Future<List<_Conversation>> _load() async {
@@ -47,7 +117,7 @@ class _MessagesPageState extends State<MessagesPage> {
     if (latest.isNotEmpty) {
       profiles =
           await Supabase.instance.client
-                  .from('profiles')
+                  .from('public_profiles')
                   .select('id, username, display_name, first_name')
                   .inFilter('id', latest.keys.toList())
               as List<dynamic>;
@@ -57,34 +127,35 @@ class _MessagesPageState extends State<MessagesPage> {
         p['id'] as String:
             p['first_name'] as String? ??
             p['display_name'] as String? ??
-            p['username'] as String? ??
             tr('Player', 'لاعب'),
     };
-    final conversations = latest.entries.map((e) {
-      final message = e.value;
-      return _Conversation(
-        id: e.key,
-        name: names[e.key] ?? tr('Player', 'لاعب'),
-        message:
-            message['image_url'] != null
-                ? tr('Photo', 'صورة')
-                : message['content'] as String? ?? '',
-        createdAt:
-            DateTime.tryParse(message['created_at'] as String? ?? '') ??
-            DateTime.now(),
-        unread: unread[e.key] ?? 0,
-      );
-    }).toList();
+    final conversations =
+        latest.entries.map((e) {
+          final message = e.value;
+          return _Conversation(
+            id: e.key,
+            name: names[e.key] ?? tr('Player', 'لاعب'),
+            message:
+                message['image_url'] != null
+                    ? tr('Photo', 'صورة')
+                    : message['content'] as String? ?? '',
+            createdAt:
+                DateTime.tryParse(message['created_at'] as String? ?? '') ??
+                DateTime.now(),
+            unread: unread[e.key] ?? 0,
+          );
+        }).toList();
 
     try {
       final memberships = await Supabase.instance.client
           .from('chat_group_members')
           .select('group_id')
           .eq('user_id', userId);
-      final groupIds = List<Map<String, dynamic>>.from(memberships)
-          .map((row) => row['group_id'] as String?)
-          .whereType<String>()
-          .toList();
+      final groupIds =
+          List<Map<String, dynamic>>.from(memberships)
+              .map((row) => row['group_id'] as String?)
+              .whereType<String>()
+              .toList();
       if (groupIds.isNotEmpty) {
         final groups = await Supabase.instance.client
             .from('chat_groups')
@@ -97,7 +168,10 @@ class _MessagesPageState extends State<MessagesPage> {
             .order('created_at', ascending: false);
         final latestByGroup = <String, Map<String, dynamic>>{};
         for (final message in List<Map<String, dynamic>>.from(messages)) {
-          latestByGroup.putIfAbsent(message['group_id'] as String, () => message);
+          latestByGroup.putIfAbsent(
+            message['group_id'] as String,
+            () => message,
+          );
         }
         for (final group in List<Map<String, dynamic>>.from(groups)) {
           final id = group['id'] as String;
@@ -131,7 +205,7 @@ class _MessagesPageState extends State<MessagesPage> {
   void _refresh() => setState(() => _loader = _load());
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFFFFDF8),
+    backgroundColor: const Color(0xFFF4F7F9),
     body: SafeArea(
       child: Column(
         children: [
@@ -144,7 +218,7 @@ class _MessagesPageState extends State<MessagesPage> {
                     tr('Messages', 'الرسائل'),
                     style: const TextStyle(
                       fontSize: 25,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       color: Color(0xFF0D2946),
                     ),
                   ),
@@ -169,8 +243,8 @@ class _MessagesPageState extends State<MessagesPage> {
                 child: Icon(Icons.auto_awesome_rounded, color: Colors.white),
               ),
               title: Text(
-                tr('Arena Assistant', 'مساعد Arena'),
-                style: const TextStyle(fontWeight: FontWeight.w800),
+                tr('Arena Assistant', 'مساعد أرينا'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               subtitle: Text(
                 tr(
@@ -181,7 +255,9 @@ class _MessagesPageState extends State<MessagesPage> {
               onTap:
                   () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const _ArenaAssistantPage()),
+                    MaterialPageRoute(
+                      builder: (_) => const _ArenaAssistantPage(),
+                    ),
                   ),
             ),
           ),
@@ -194,7 +270,7 @@ class _MessagesPageState extends State<MessagesPage> {
                 hintText: tr('Search conversations', 'ابحث في المحادثات'),
                 prefixIcon: const Icon(Icons.search_rounded),
                 filled: true,
-                fillColor: const Color(0xFFFFFDF8),
+                fillColor: const Color(0xFFF4F7F9),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: const BorderSide(color: Color(0x33000000)),
@@ -233,6 +309,7 @@ class _MessagesPageState extends State<MessagesPage> {
                                     (_) => _ChatPage(conversation: items[i]),
                               ),
                             );
+                            if (!mounted) return;
                             _refresh();
                           },
                         ),
@@ -280,8 +357,11 @@ class _MessagesPageState extends State<MessagesPage> {
       if (!mounted || conversation == null) return;
       await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => _ChatPage(conversation: conversation)),
+        MaterialPageRoute(
+          builder: (_) => _ChatPage(conversation: conversation),
+        ),
       );
+      if (!mounted) return;
       _refresh();
     }
   }
@@ -307,6 +387,7 @@ class _MessagesPageState extends State<MessagesPage> {
               ),
         ),
       );
+      if (!mounted) return;
       _refresh();
     }
   }
@@ -378,19 +459,45 @@ class _ChatPageState extends State<_ChatPage> {
     if (message.isEmpty && imageUrl == null) return;
     final me = Supabase.instance.client.auth.currentUser?.id;
     if (me == null) return;
-    await Supabase.instance.client
-        .from(widget.conversation.group ? 'group_messages' : 'direct_messages')
-        .insert({
-          'sender_id': me,
-          if (widget.conversation.group) 'group_id': widget.conversation.id,
-          if (!widget.conversation.group)
-            'receiver_id': widget.conversation.id,
-          'content': message,
-          'image_url': imageUrl,
-        });
-    _text.clear();
+    try {
+      await Supabase.instance.client
+          .from(
+            widget.conversation.group ? 'group_messages' : 'direct_messages',
+          )
+          .insert({
+            'sender_id': me,
+            if (widget.conversation.group) 'group_id': widget.conversation.id,
+            if (!widget.conversation.group)
+              'receiver_id': widget.conversation.id,
+            'content': message,
+            'image_url': imageUrl,
+          });
+    } on PostgrestException catch (error) {
+      _showContactError(error);
+      return;
+    }
     if (!mounted) return;
+    _text.clear();
     setState(() => _loader = _load());
+  }
+
+  void _showContactError(PostgrestException error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error.message.contains('CONTACT_BLOCKED')
+              ? tr(
+                'Contact is unavailable because one of you blocked the other.',
+                'التواصل غير متاح لوجود حظر بين الحسابين.',
+              )
+              : tr(
+                'Could not complete this action. Please try again.',
+                'تعذر إكمال العملية. أعد المحاولة.',
+              ),
+        ),
+      ),
+    );
   }
 
   Future<void> _actions() async {
@@ -427,25 +534,42 @@ class _ChatPageState extends State<_ChatPage> {
             ),
           ),
     );
+    if (!mounted || value == null) return;
     final me = Supabase.instance.client.auth.currentUser?.id;
     if (me == null) return;
-    if (value == 'friend') {
-      await Supabase.instance.client.from('friend_requests').upsert({
-        'sender_id': me,
-        'receiver_id': widget.conversation.id,
-        'status': 'pending',
-      });
-    }
-    if (value == 'block') {
-      await Supabase.instance.client.from('user_blocks').upsert({
-        'blocker_id': me,
-        'blocked_id': widget.conversation.id,
-      });
-      if (mounted) {
-        Navigator.pop(context);
+    try {
+      if (value == 'friend') {
+        final status = await Supabase.instance.client.rpc(
+          'request_friendship',
+          params: {'p_receiver': widget.conversation.id},
+        );
+        if (status == 'accepted') {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  tr('You are already friends.', 'أنتما صديقان بالفعل.'),
+                ),
+              ),
+            );
+          }
+          return;
+        }
       }
+      if (value == 'block') {
+        await Supabase.instance.client.from('user_blocks').upsert({
+          'blocker_id': me,
+          'blocked_id': widget.conversation.id,
+        });
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+    } on PostgrestException catch (error) {
+      _showContactError(error);
+      return;
     }
-    if (mounted && value != null) {
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -498,20 +622,27 @@ class _ChatPageState extends State<_ChatPage> {
                     final row = rows[i];
                     final mine = row['sender_id'] == me;
                     final image = row['image_url'] as String?;
+                    final parsedSentAt = DateTime.tryParse(
+                      '${row['created_at'] ?? ''}',
+                    );
                     final sentAt =
-                        DateTime.tryParse('${row['created_at'] ?? ''}')
-                            ?.toLocal() ??
-                        DateTime.now();
+                        parsedSentAt == null
+                            ? toOmanTime(DateTime.now())
+                            : toOmanTime(parsedSentAt);
                     final previous =
                         i == 0
                             ? null
-                            : DateTime.tryParse(
+                            : switch (DateTime.tryParse(
                               '${rows[i - 1]['created_at'] ?? ''}',
-                            )?.toLocal();
+                            )) {
+                              final parsed? => toOmanTime(parsed),
+                              null => null,
+                            };
                     final showDivider =
                         previous == null ||
                         !DateUtils.isSameDay(previous, sentAt) ||
-                        sentAt.difference(previous) > const Duration(minutes: 90);
+                        sentAt.difference(previous) >
+                            const Duration(minutes: 90);
                     return Column(
                       children: [
                         if (showDivider) _MessageTimeDivider(time: sentAt),
@@ -525,21 +656,24 @@ class _ChatPageState extends State<_ChatPage> {
                             padding: const EdgeInsets.all(12),
                             constraints: const BoxConstraints(maxWidth: 300),
                             decoration: BoxDecoration(
-                              color: mine ? _green : const Color(0xFFFFFDF8),
+                              color: mine ? _green : const Color(0xFFF4F7F9),
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 if (image != null)
-                                  Image.network(image)
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: PrivateChatImage(reference: image),
+                                  )
                                 else
                                   Text(
                                     row['content'] as String? ?? '',
                                     style: TextStyle(
                                       color:
                                           mine
-                                              ? const Color(0xFFFFFDF8)
+                                              ? const Color(0xFFF4F7F9)
                                               : Colors.black,
                                     ),
                                   ),
@@ -552,7 +686,7 @@ class _ChatPageState extends State<_ChatPage> {
                                     color:
                                         mine
                                             ? const Color(0xB3FFFDF8)
-                                            : const Color(0x99000000),
+                                            : const Color(0xFF607184),
                                   ),
                                 ),
                               ],
@@ -621,31 +755,31 @@ class _ChatPageState extends State<_ChatPage> {
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
       if (userId == null) return;
-      final extension = picked.name.split('.').last.toLowerCase();
-      final safeExtension =
-          {'jpg', 'jpeg', 'png', 'webp'}.contains(extension)
-              ? extension
-              : 'jpg';
-      final path =
-          '$userId/${DateTime.now().microsecondsSinceEpoch}.$safeExtension';
-      await client.storage
-          .from('chat-images')
-          .uploadBinary(
-            path,
-            await picked.readAsBytes(),
-            fileOptions: FileOptions(
-              contentType: picked.mimeType ?? 'image/$safeExtension',
-              upsert: false,
-            ),
-          );
-      await _send(
-        imageUrl: client.storage.from('chat-images').getPublicUrl(path),
+      final uploaded = await uploadValidatedImage(
+        bytes: await picked.readAsBytes(),
+        bucket: 'chat-images',
       );
-    } on StorageException catch (error) {
+      if (!mounted) return;
+      await _send(imageUrl: uploaded['reference'] as String);
+    } on ImageUploadFailure catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } on StorageException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              localizedBackendError(
+                error.message,
+                englishFallback: 'Could not upload the image.',
+                arabicFallback: 'تعذر رفع الصورة.',
+              ),
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _uploadingImage = false);
@@ -659,7 +793,7 @@ class _ConversationCard extends StatelessWidget {
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Material(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     borderRadius: BorderRadius.circular(16),
     child: InkWell(
       onTap: onTap,
@@ -679,7 +813,7 @@ class _ConversationCard extends StatelessWidget {
                 conversation.name.substring(0, 1).toUpperCase(),
                 style: const TextStyle(
                   color: _green,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   fontSize: 20,
                 ),
               ),
@@ -692,7 +826,7 @@ class _ConversationCard extends StatelessWidget {
                   Text(
                     conversation.name,
                     style: const TextStyle(
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       fontSize: 16,
                     ),
                   ),
@@ -702,7 +836,7 @@ class _ConversationCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0x99000000),
+                      color: Color(0xFF607184),
                       fontSize: 13,
                     ),
                   ),
@@ -716,7 +850,7 @@ class _ConversationCard extends StatelessWidget {
                   _time(conversation.createdAt),
                   style: const TextStyle(
                     fontSize: 11,
-                    color: Color(0x99000000),
+                    color: Color(0xFF607184),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -733,7 +867,7 @@ class _ConversationCard extends StatelessWidget {
                     child: Text(
                       '${conversation.unread}',
                       style: const TextStyle(
-                        color: Color(0xFFFFFDF8),
+                        color: Color(0xFFF4F7F9),
                         fontSize: 11,
                       ),
                     ),
@@ -764,16 +898,13 @@ class _EmptyState extends StatelessWidget {
           SizedBox(height: 38),
           Text(
             tr('No conversations', 'لا توجد محادثات'),
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
           SizedBox(height: 8),
           Text(
-            tr(
-              'Your conversations will appear here.',
-              'ستظهر محادثاتك هنا.',
-            ),
+            tr('Your conversations will appear here.', 'ستظهر محادثاتك هنا.'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0x99000000)),
+            style: TextStyle(color: Color(0xFF607184)),
           ),
         ],
       ),
@@ -805,7 +936,7 @@ class _PeopleSearch extends SearchDelegate<_Person?> {
     final current = Supabase.instance.client.auth.currentUser?.id;
     final rows =
         await Supabase.instance.client
-                .from('profiles')
+                .from('public_profiles')
                 .select('id, username, display_name')
                 .or('username.ilike.%$query%,display_name.ilike.%$query%')
                 .limit(20)
@@ -910,7 +1041,7 @@ class _MessageTimeDivider extends StatelessWidget {
       child: Text(
         '$day، ${_time(time)}',
         textDirection: TextDirection.ltr,
-        style: const TextStyle(color: Color(0x99000000), fontSize: 11),
+        style: const TextStyle(color: Color(0xFF607184), fontSize: 11),
       ),
     );
   }
@@ -932,13 +1063,18 @@ class _CreateGroupPageState extends State<_CreateGroupPage> {
   Future<List<_Person>> _loadPeople() async {
     final me = Supabase.instance.client.auth.currentUser?.id;
     final rows = await Supabase.instance.client
-        .from('profiles')
+        .from('public_profiles')
         .select('id, username, display_name, first_name')
         .neq('id', me ?? '')
         .order('display_name');
     return List<Map<String, dynamic>>.from(rows).map((row) {
-      final display = '${row['first_name'] ?? row['display_name'] ?? row['username'] ?? ''}'.trim();
-      return _Person(row['id'] as String, display.isEmpty ? tr('Player', 'لاعب') : display);
+      final display =
+          '${row['first_name'] ?? row['display_name'] ?? row['username'] ?? ''}'
+              .trim();
+      return _Person(
+        row['id'] as String,
+        display.isEmpty ? tr('Player', 'لاعب') : display,
+      );
     }).toList();
   }
 
@@ -971,7 +1107,15 @@ class _CreateGroupPageState extends State<_CreateGroupPage> {
     } on PostgrestException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message)),
+          SnackBar(
+            content: Text(
+              localizedBackendError(
+                error.message,
+                englishFallback: 'Could not create the group.',
+                arabicFallback: 'تعذر إنشاء المجموعة.',
+              ),
+            ),
+          ),
         );
       }
     } finally {
@@ -1005,22 +1149,25 @@ class _CreateGroupPageState extends State<_CreateGroupPage> {
               if (snapshot.hasError) return _ErrorState(onRetry: () {});
               final people = snapshot.data ?? const [];
               return ListView(
-                children: people.map((person) {
-                  return CheckboxListTile(
-                    value: _selected.contains(person.id),
-                    title: Text(person.name),
-                    secondary: CircleAvatar(child: Text(person.name.characters.first)),
-                    onChanged: (selected) {
-                      setState(() {
-                        if (selected == true) {
-                          _selected.add(person.id);
-                        } else {
-                          _selected.remove(person.id);
-                        }
-                      });
-                    },
-                  );
-                }).toList(),
+                children:
+                    people.map((person) {
+                      return CheckboxListTile(
+                        value: _selected.contains(person.id),
+                        title: Text(person.name),
+                        secondary: CircleAvatar(
+                          child: Text(person.name.characters.first),
+                        ),
+                        onChanged: (selected) {
+                          setState(() {
+                            if (selected == true) {
+                              _selected.add(person.id);
+                            } else {
+                              _selected.remove(person.id);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
               );
             },
           ),
@@ -1048,9 +1195,7 @@ class _Person {
 }
 
 String _time(DateTime time) {
-  final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
-  final period = time.hour >= 12 ? tr('PM', 'م') : tr('AM', 'ص');
-  return '$hour:${time.minute.toString().padLeft(2, '0')} $period';
+  return formatOmanTime12(time);
 }
 
 class _ArenaAssistantPage extends StatefulWidget {
@@ -1089,8 +1234,11 @@ class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
       setState(
         () => _messages.add(
           _AssistantMessage(
-            text: '${data['reply'] ?? tr('No answer was returned.', 'لم تصل إجابة.')}',
-            arenas: List<Map<String, dynamic>>.from(data['arenas'] as List? ?? const []),
+            text:
+                '${data['reply'] ?? tr('No answer was returned.', 'لم تصل إجابة.')}',
+            arenas: List<Map<String, dynamic>>.from(
+              data['arenas'] as List? ?? const [],
+            ),
           ),
         ),
       );
@@ -1113,7 +1261,7 @@ class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(tr('Arena Assistant', 'مساعد Arena'))),
+    appBar: AppBar(title: Text(tr('Arena Assistant', 'مساعد أرينا'))),
     body: Column(
       children: [
         Expanded(
@@ -1124,13 +1272,16 @@ class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
               final message = _messages[index];
               return Align(
                 alignment:
-                    message.mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
+                    message.mine
+                        ? AlignmentDirectional.centerEnd
+                        : AlignmentDirectional.centerStart,
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 340),
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: message.mine ? const Color(0xFF0D2946) : Colors.white,
+                    color:
+                        message.mine ? const Color(0xFF0D2946) : Colors.white,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: const Color(0x220D2946)),
                   ),
@@ -1139,7 +1290,12 @@ class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
                     children: [
                       Text(
                         message.text,
-                        style: TextStyle(color: message.mine ? Colors.white : const Color(0xFF0D2946)),
+                        style: TextStyle(
+                          color:
+                              message.mine
+                                  ? Colors.white
+                                  : const Color(0xFF0D2946),
+                        ),
                       ),
                       ...message.arenas.map(
                         (arena) => ListTile(
@@ -1169,7 +1325,9 @@ class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => ProductionArenaDetailsPage(arenaId: id),
+                                builder:
+                                    (_) =>
+                                        ProductionArenaDetailsPage(arenaId: id),
                               ),
                             );
                           },
@@ -1221,7 +1379,11 @@ class _ArenaAssistantPageState extends State<_ArenaAssistantPage> {
 }
 
 class _AssistantMessage {
-  const _AssistantMessage({required this.text, this.mine = false, this.arenas = const []});
+  const _AssistantMessage({
+    required this.text,
+    this.mine = false,
+    this.arenas = const [],
+  });
   final String text;
   final bool mine;
   final List<Map<String, dynamic>> arenas;

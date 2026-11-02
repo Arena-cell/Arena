@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter/services.dart';
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,7 @@ import '../home/pages/home_page.dart';
 import '../messages/pages/messages_page.dart';
 import '../profile/pages/profile_page.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/services/push_notification_service.dart';
 
 class MainNavigationPage extends StatefulWidget {
   const MainNavigationPage({super.key});
@@ -34,6 +36,9 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _selectedIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) PushNotificationService.instance.activateNavigation();
+    });
   }
 
   @override
@@ -94,6 +99,14 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
         }
       },
       child: Scaffold(
+        appBar:
+            _selectedIndex == 0
+                ? AppBar(
+                  toolbarHeight: 0,
+                  backgroundColor: AppColors.navy,
+                  systemOverlayStyle: SystemUiOverlayStyle.light,
+                )
+                : null,
         extendBody: true,
         body: PageView(
           controller: _pageController,
@@ -130,7 +143,7 @@ class _PlayOnBottomNavigationBar extends StatelessWidget {
   final ValueChanged<int> onSelected;
 
   static const Color _activeColor = AppColors.navy;
-  static const Color _inactiveColor = Color(0x99000000);
+  static const Color _inactiveColor = Color(0xFF607184);
   static const Color _barColor = AppColors.courtMist;
 
   @override
@@ -175,16 +188,16 @@ class _PlayOnBottomNavigationBar extends StatelessWidget {
                     final left =
                         physicalPage * segmentWidth +
                         (segmentWidth - activeWidth) / 2;
-                    final labelIndex = logicalPage
-                        .round()
-                        .clamp(0, items.length - 1)
-                        .toInt();
+                    final labelIndex =
+                        logicalPage.round().clamp(0, items.length - 1).toInt();
                     return Stack(
                       clipBehavior: Clip.none,
                       alignment: Alignment.centerLeft,
                       children: [
                         Row(
-                          children: List<Widget>.generate(items.length, (index) {
+                          children: List<Widget>.generate(items.length, (
+                            index,
+                          ) {
                             return Expanded(
                               child: _NavigationIconButton(
                                 item: items[index],

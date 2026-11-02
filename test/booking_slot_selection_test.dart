@@ -63,6 +63,13 @@ void main() {
     expect(crossedResult.selected, [at(5)]);
   });
 
+  test('a booking end time does not close the following start slot', () {
+    final busy = [BookingInterval(start: at(5), end: at(6))];
+
+    expect(isBookingSlotBusy(at(5), busy), isTrue);
+    expect(isBookingSlotBusy(at(6), busy), isFalse);
+  });
+
   test('slots from another date are not treated as consecutive', () {
     final result = toggleConsecutiveBookingSlot(
       current: [at(23)],

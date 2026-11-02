@@ -1,0 +1,19 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:@imagemagick/magick-wasm@0.0.45": "0.0.45"
+  },
+  "npm": {
+    "@imagemagick/magick-wasm@0.0.45": {
+      "integrity": "sha512-ef8FHka4xLWo5/tGTV6P45bPjTvnKZz/oHN6sCDTbY8zaCdM2MeaoQHLsy9IHuiVHQhomG3TQ6ErgTnEDyuzvw=="
+    }
+  },
+  "remote": {
+    "https://esm.sh/@supabase/supabase-js@2.110.5": "55f04f5b27e7700a581c9e506ff5761fd66bb00545a44f3a2f155d4f30597e6c"
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:@imagemagick/magick-wasm@0.0.45"
+    ]
+  }
+}

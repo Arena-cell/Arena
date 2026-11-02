@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_colors.dart';
 
@@ -6,26 +7,28 @@ class AppTheme {
   AppTheme._();
 
   static ThemeData get lightTheme {
-    const black = AppColors.arenaBlack;
-    const mist = AppColors.courtMist;
+    const black = AppColors.navy;
+    const mist = Color(0xFFF4F7F9);
     const accent = AppColors.navy;
-    const radius = 12.0;
+    const radius = 16.0;
 
     final scheme = ColorScheme.fromSeed(
       seedColor: accent,
       brightness: Brightness.light,
       primary: accent,
       onPrimary: mist,
-      secondary: accent,
+      secondary: AppColors.brandGreen,
       onSecondary: mist,
-      surface: mist,
+      surface: Colors.white,
       onSurface: black,
-      error: black,
+      error: AppColors.error,
       onError: mist,
     );
 
     return ThemeData(
       useMaterial3: true,
+      fontFamily: 'Sora',
+      fontFamilyFallback: const ['Alexandria'],
       colorScheme: scheme,
       scaffoldBackgroundColor: mist,
       canvasColor: mist,
@@ -40,29 +43,30 @@ class AppTheme {
         elevation: 0,
         centerTitle: true,
         toolbarHeight: 64,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
         titleTextStyle: TextStyle(
           color: black,
-          fontSize: 24,
+          fontSize: 22,
           fontWeight: FontWeight.w700,
           letterSpacing: -.3,
         ),
       ),
       cardTheme: CardThemeData(
-        color: mist,
-        elevation: 1,
+        color: Colors.white,
+        elevation: 0,
         shadowColor: const Color(0x24000000),
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radius),
-          side: const BorderSide(color: Color(0x1F000000)),
+          side: const BorderSide(color: Color(0xFFDCE3E9)),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: accent,
-          foregroundColor: mist,
+          backgroundColor: AppColors.brandGreen,
+          foregroundColor: AppColors.navy,
           elevation: 0,
-          minimumSize: const Size(double.infinity, 56),
+          minimumSize: const Size(64, 52),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radius),
@@ -71,11 +75,11 @@ class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: accent,
-          foregroundColor: mist,
+          backgroundColor: AppColors.brandGreen,
+          foregroundColor: AppColors.navy,
           disabledBackgroundColor: const Color(0x73000000),
           disabledForegroundColor: mist,
-          minimumSize: const Size(double.infinity, 56),
+          minimumSize: const Size(64, 52),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radius),
@@ -85,8 +89,8 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: black,
-          side: const BorderSide(color: black, width: 2),
-          minimumSize: const Size(double.infinity, 56),
+          side: const BorderSide(color: Color(0xFFDCE3E9)),
+          minimumSize: const Size(64, 52),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radius),
@@ -101,7 +105,7 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: mist,
+        fillColor: Colors.white,
         hintStyle: const TextStyle(color: Color(0x99000000)),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
@@ -109,15 +113,33 @@ class AppTheme {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius),
-          borderSide: const BorderSide(color: Color(0x52000000)),
+          borderSide: const BorderSide(color: Color(0xFFDCE3E9)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius),
-          borderSide: const BorderSide(color: Color(0x52000000)),
+          borderSide: const BorderSide(color: Color(0xFFDCE3E9)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius),
           borderSide: const BorderSide(color: accent, width: 2),
+        ),
+      ),
+      navigationBarTheme: const NavigationBarThemeData(
+        backgroundColor: Colors.white,
+        indicatorColor: Color(0xFFEAF1D9),
+        labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+      ),
+      listTileTheme: const ListTileThemeData(
+        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        titleTextStyle: TextStyle(
+          color: black,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+        subtitleTextStyle: TextStyle(
+          color: AppColors.hint,
+          fontSize: 13,
+          height: 1.5,
         ),
       ),
       iconTheme: const IconThemeData(color: black, size: 24),
@@ -181,20 +203,20 @@ class AppTheme {
           color: mist,
           fontWeight: FontWeight.w600,
         ),
-        side: BorderSide(color: Color(0x52000000)),
+        side: BorderSide(color: Color(0xFFDCE3E9)),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
         ),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: mist,
+        backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
       ),
       dialogTheme: const DialogThemeData(
-        backgroundColor: mist,
+        backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(16)),
@@ -218,7 +240,7 @@ class AppTheme {
           (states) => states.contains(WidgetState.selected) ? black : mist,
         ),
         checkColor: const WidgetStatePropertyAll(mist),
-        side: const BorderSide(color: black, width: 2),
+        side: const BorderSide(color: Color(0xFFDCE3E9)),
       ),
       radioTheme: RadioThemeData(
         fillColor: WidgetStateProperty.resolveWith(

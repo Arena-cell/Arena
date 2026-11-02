@@ -10,9 +10,14 @@ Deno.serve(async (request) => {
   try {
     const auth = request.headers.get('Authorization');
     if (!auth) return json({ error: 'AUTH_REQUIRED' }, 401);
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!supabaseUrl || !anonKey) {
+      return json({ error: 'ASSISTANT_NOT_CONFIGURED' }, 503);
+    }
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
+      supabaseUrl,
+      anonKey,
       { global: { headers: { Authorization: auth } } },
     );
     const { data: userData } = await supabase.auth.getUser();
@@ -22,6 +27,13 @@ Deno.serve(async (request) => {
     const message = `${body.message ?? ''}`.trim().slice(0, 1000);
     const locale = body.locale === 'ar' ? 'ar' : 'en';
     if (!message) return json({ error: 'EMPTY_MESSAGE' }, 400);
+
+    const { data: allowed, error: rateError } = await supabase.rpc(
+      'consume_arena_assistant_rate_limit',
+      { p_max_requests: 12 },
+    );
+    if (rateError) throw rateError;
+    if (allowed !== true) return json({ error: 'RATE_LIMITED' }, 429);
 
     const apiKey = Deno.env.get('OPENAI_API_KEY');
     if (!apiKey) return json({ error: 'AI_NOT_CONFIGURED' }, 503);
@@ -46,7 +58,7 @@ Deno.serve(async (request) => {
               type: 'object',
               additionalProperties: false,
               properties: {
-                intent: { type: 'string', enum: ['search', 'points', 'next_booking', 'policy', 'other'] },
+                intent: { type: 'string', enum: ['search', 'points', 'coupons', 'next_booking', 'policy', 'other'] },
                 sport: { type: ['string', 'null'], enum: ['football', 'padel', 'basketball', 'tennis', null] },
                 area: { type: ['string', 'null'] },
                 date: { type: ['string', 'null'] },
@@ -78,8 +90,18 @@ Deno.serve(async (request) => {
       if (error) throw error;
       let arenas = data ?? [];
       if (intent.sport) arenas = arenas.filter((arena: any) => (arena.sports ?? []).some((sport: string) => normalizeSport(sport) === intent.sport));
+      const matchingArenas = [...arenas];
+      let alternativeStart: Date | null = null;
       if (intent.date && intent.time) {
         const start = new Date(`${intent.date}T${intent.time}:00+04:00`);
+        if (Number.isNaN(start.getTime()) || start.getTime() <= Date.now()) {
+          return json({
+            error: 'INVALID_SEARCH_TIME',
+            reply: locale === 'ar'
+              ? 'اختر تاريخًا ووقتًا قادمين بصيغة صحيحة.'
+              : 'Choose a valid future date and time.',
+          }, 400);
+        }
         const end = new Date(start.getTime() + (intent.duration_hours ?? 1) * 3600000);
         const available = [];
         for (const arena of arenas.slice(0, 12)) {
@@ -91,10 +113,40 @@ Deno.serve(async (request) => {
           if (hasCourt === true) available.push(arena);
         }
         arenas = available;
+        if (arenas.length === 0) {
+          for (let offset = 1; offset <= 12 && alternativeStart === null; offset += 1) {
+            const candidateStart = new Date(start.getTime() + offset * 3600000);
+            const candidateEnd = new Date(
+              candidateStart.getTime() + (intent.duration_hours ?? 1) * 3600000,
+            );
+            for (const arena of matchingArenas.slice(0, 8)) {
+              const { data: hasCourt } = await supabase.rpc(
+                'arena_has_available_court',
+                {
+                  p_arena_id: arena.id,
+                  p_starts_at: candidateStart.toISOString(),
+                  p_ends_at: candidateEnd.toISOString(),
+                },
+              );
+              if (hasCourt === true) {
+                arenas.push(arena);
+                alternativeStart = candidateStart;
+                break;
+              }
+            }
+          }
+        }
       }
       return json({
-        reply: locale === 'ar' ? `وجدت ${arenas.length} من الملاعب المطابقة.` : `I found ${arenas.length} matching arenas.`,
+        reply: alternativeStart
+          ? locale === 'ar'
+            ? `لا يوجد ملعب في الوقت المطلوب. أقرب وقت متاح هو ${formatBookingDate(alternativeStart.toISOString(), locale)}.`
+            : `Nothing is available at that time. The nearest available time is ${formatBookingDate(alternativeStart.toISOString(), locale)}.`
+          : locale === 'ar'
+            ? `وجدت ${arenas.length} من الملاعب المطابقة.`
+            : `I found ${arenas.length} matching arenas.`,
         arenas: arenas.slice(0, 8),
+        alternative_start: alternativeStart?.toISOString() ?? null,
       });
     }
     if (intent.intent === 'points') {
@@ -131,6 +183,35 @@ Deno.serve(async (request) => {
         arenas: [],
       });
     }
+    if (intent.intent === 'coupons') {
+      const { data: coupons, error } = await supabase
+        .from('reward_coupons')
+        .select('id,value_omr,status,created_at')
+        .eq('user_id', user.id)
+        .eq('status', 'available')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      const count = coupons?.length ?? 0;
+      return json({
+        reply: locale === 'ar'
+          ? count === 0
+            ? 'لا يوجد لديك كوبون متاح حاليًا. تحصل على كوبون بقيمة ريال عماني واحد مقابل كل 100 نقطة، ويمكن اختياره في ملخص الحجز قبل التأكيد.'
+            : `لديك ${count} كوبون متاح. اختر الكوبون في ملخص الحجز قبل التأكيد، ويُستخدم مرة واحدة فقط.`
+          : count === 0
+            ? 'You have no available coupons. Every 100 points creates an OMR 1 coupon that can be selected before confirming a booking.'
+            : `You have ${count} available coupon(s). Select one in the booking summary before confirmation; each coupon can be used once.`,
+        coupons: coupons ?? [],
+        arenas: [],
+      });
+    }
+    if (intent.intent === 'policy') {
+      return json({
+        reply: locale === 'ar'
+          ? 'الحجز يصبح مؤكدًا بعد نجاح العملية. لا يمكن للاعب إلغاء الحجز من طرفه؛ الإلغاء يتم من الإدارة أو صاحب الملعب مع تسجيل السبب والوقت. الحجز الملغي يعيد الوحدة إلى التوفر، وتظهر أي سياسة إضافية يحددها الملعب في صفحة تفاصيله.'
+          : 'A booking is confirmed after the transaction succeeds. Players cannot cancel it directly; an administrator or the stadium owner records the cancellation reason and time. A cancelled booking returns its court to availability. Any venue-specific terms appear on the arena details page.',
+        arenas: [],
+      });
+    }
     return json({
       reply: locale === 'ar'
         ? 'أستطيع البحث عن الملاعب المتاحة حسب الرياضة والموقع والتاريخ والوقت والسعر.'
@@ -138,12 +219,16 @@ Deno.serve(async (request) => {
       arenas: [],
     });
   } catch (error) {
-    return json({ error: 'ASSISTANT_FAILED', detail: `${error}` }, 500);
+    console.error(
+      'arena_assistant_failed',
+      error instanceof Error ? error.name : 'unknown_error',
+    );
+    return json({ error: 'ASSISTANT_FAILED' }, 500);
   }
 });
 
 function safe(value: string) {
-  return value.replace(/[%_,()]/g, ' ').trim();
+  return value.replace(/[^\p{L}\p{N}\s-]/gu, ' ').trim();
 }
 
 function normalizeSport(value: string) {
