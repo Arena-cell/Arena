@@ -12,9 +12,22 @@ if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+val uploadStore = System.getenv("ARENA_USER_KEYSTORE")
+val uploadStorePassword = System.getenv("ARENA_USER_STORE_PASSWORD")
+val uploadAlias = System.getenv("ARENA_USER_KEY_ALIAS")
+val uploadKeyPassword = System.getenv("ARENA_USER_KEY_PASSWORD")
+val uploadSigningReady = !uploadStore.isNullOrBlank() && !uploadStorePassword.isNullOrBlank() &&
+    !uploadAlias.isNullOrBlank() && !uploadKeyPassword.isNullOrBlank()
+
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.project == project && it.name.contains("Release") } && !uploadSigningReady) {
+        throw GradleException("Release signing missing. Configure private ARENA_USER signing environment variables; Debug signing is never used for Release.")
+    }
+}
+
 android {
     namespace = "com.example.playon"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -33,16 +46,26 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // firebase_messaging 16 uses native APIs available from Android 6.0.
         minSdk = 23
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (uploadSigningReady) {
+            create("release") {
+                storeFile = file(uploadStore!!)
+                storePassword = uploadStorePassword
+                keyAlias = uploadAlias
+                keyPassword = uploadKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Release upload credentials are supplied privately by the account holder.
+            signingConfig = if (uploadSigningReady) signingConfigs.getByName("release") else null
         }
     }
 }

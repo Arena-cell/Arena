@@ -77,7 +77,7 @@ class ArenaEmptyState extends StatelessWidget {
                 style: const TextStyle(
                   color: AppColors.navy,
                   fontSize: 20,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 8),

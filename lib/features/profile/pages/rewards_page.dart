@@ -64,7 +64,7 @@ class RewardsPage extends StatelessWidget {
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 42,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   Text(
@@ -87,7 +87,7 @@ class RewardsPage extends StatelessWidget {
             const SizedBox(height: 24),
             Text(
               tr('Coupons', 'الكوبونات'),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 10),
             if (data.coupons.isEmpty)
@@ -111,7 +111,7 @@ class RewardsPage extends StatelessWidget {
             const SizedBox(height: 24),
             Text(
               tr('Points history', 'سجل النقاط'),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
             ),
             ...data.ledger.map((entry) {
               final points = (entry['points'] as num?)?.toInt() ?? 0;

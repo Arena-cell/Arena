@@ -1,4 +1,7 @@
+import 'preferences_page.dart';
+import '../../../shared/widgets/legal_information_page.dart';
 import 'package:flutter/material.dart';
+import '../../bookings/pages/checkout_page.dart';
 import '../../../core/localization/app_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../main.dart';
@@ -11,7 +14,7 @@ import 'edit_profile_page.dart';
 import 'rewards_page.dart';
 
 const _green = Color(0xFF000000);
-const _pageBackground = Color(0xFFFFFDF8);
+const _pageBackground = Color(0xFFF4F7F9);
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
@@ -57,203 +60,6 @@ class ProfilePage extends StatelessWidget {
     ).push(MaterialPageRoute(builder: (_) => const EditProfilePage()));
   }
 
-  // Kept temporarily to preserve the previous dialog implementation while the
-  // new full-screen editor is trialled.
-  // ignore: unused_element
-  Future<void> _editProfileLegacy(BuildContext context) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    final metadata = user.userMetadata ?? {};
-    final username = TextEditingController(
-      text: metadata['username'] as String? ?? '',
-    );
-    final firstName = TextEditingController(
-      text: metadata['first_name'] as String? ?? '',
-    );
-    final lastName = TextEditingController(
-      text: metadata['last_name'] as String? ?? '',
-    );
-    final email = TextEditingController(text: user.email ?? '');
-    final save = await showDialog<bool>(
-      context: context,
-      builder:
-          (dialogContext) => Dialog(
-            insetPadding: const EdgeInsets.symmetric(
-              horizontal: 18,
-              vertical: 28,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      tr('Edit profile', 'تعديل الملف الشخصي'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Stack(
-                      alignment: Alignment.bottomRight,
-                      children: const [
-                        CircleAvatar(
-                          radius: 46,
-                          backgroundColor: Color(0xFFFFFDF8),
-                          child: Icon(
-                            Icons.person_rounded,
-                            size: 50,
-                            color: _green,
-                          ),
-                        ),
-                        CircleAvatar(
-                          radius: 17,
-                          backgroundColor: Color(0xFF000000),
-                          child: Icon(
-                            Icons.camera_alt_outlined,
-                            size: 18,
-                            color: Color(0xFFFFFDF8),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 22),
-                    TextField(
-                      controller: username,
-                      decoration: InputDecoration(
-                        labelText: tr('Username', 'اسم المستخدم'),
-                      ),
-                    ),
-                    TextField(
-                      controller: firstName,
-                      decoration: InputDecoration(
-                        labelText: tr('First name', 'الاسم الأول'),
-                      ),
-                    ),
-                    TextField(
-                      controller: lastName,
-                      decoration: InputDecoration(
-                        labelText: tr('Last name', 'اسم العائلة'),
-                      ),
-                    ),
-                    TextField(
-                      controller: email,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: InputDecoration(
-                        labelText: tr('Email address', 'البريد الإلكتروني'),
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(dialogContext, false),
-                      child: Text(tr('Cancel', 'إلغاء')),
-                    ),
-                    const SizedBox(height: 10),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF000000),
-                        minimumSize: const Size.fromHeight(54),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: () => Navigator.pop(dialogContext, true),
-                      child: Text(tr('Save', 'حفظ')),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-    if (save != true) return;
-    final normalizedUsername = username.text.trim();
-    if (!RegExp(r'^[a-z][a-z0-9_]{3,}$').hasMatch(normalizedUsername)) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              tr(
-                'Username must start with a lowercase letter and contain at least 4 characters.',
-                'اسم المستخدم يجب أن يبدأ بحرف إنجليزي صغير وأن يكون 4 أحرف أو أكثر.',
-              ),
-            ),
-          ),
-        );
-      }
-      return;
-    }
-    try {
-      final existing =
-          await Supabase.instance.client
-              .from('profiles')
-              .select('id')
-              .eq('username', normalizedUsername)
-              .neq('id', user.id)
-              .maybeSingle();
-      if (existing != null) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                tr(
-                  'This username is already in use.',
-                  'اسم المستخدم مستخدم بالفعل.',
-                ),
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      await Supabase.instance.client.auth.updateUser(
-        UserAttributes(
-          email: email.text.trim() == user.email ? null : email.text.trim(),
-          data: {
-            'username': normalizedUsername,
-            'first_name': firstName.text.trim(),
-            'last_name': lastName.text.trim(),
-          },
-        ),
-      );
-      await Supabase.instance.client.from('profiles').upsert({
-        'id': user.id,
-        'username': normalizedUsername,
-        'display_name':
-            '${firstName.text.trim()} ${lastName.text.trim()}'.trim(),
-      });
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            tr('Profile updated successfully.', 'تم تحديث الملف الشخصي بنجاح.'),
-          ),
-        ),
-      );
-    } on AuthException catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              localizedBackendError(
-                error.message,
-                englishFallback: 'Could not update your profile.',
-                arabicFallback: 'تعذر تحديث ملفك الشخصي.',
-              ),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     if (GuestSession.isGuest) {
@@ -270,7 +76,7 @@ class ProfilePage extends StatelessWidget {
                   const SizedBox(height: 18),
                   Text(
                     tr('Guest account', 'حساب زائر'),
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -306,7 +112,7 @@ class ProfilePage extends StatelessWidget {
               tr('Settings', 'الإعدادات'),
               style: const TextStyle(
                 fontSize: 25,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 color: Color(0xFF0D2946),
               ),
             ),
@@ -333,8 +139,8 @@ class ProfilePage extends StatelessWidget {
                 ),
                 _MenuRow(
                   icon: Icons.credit_card_outlined,
-                  title: tr('Payment methods', 'طرق الدفع'),
-                  onTap: () {},
+                  title: tr('My payment requests', 'طلبات الدفع الخاصة بي'),
+                  onTap: () => _open(context, const PaymentOrdersPage()),
                 ),
               ],
             ),
@@ -462,7 +268,7 @@ class _ProfileHeader extends StatelessWidget {
                 height: 62,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFFFFFDF8),
+                  color: const Color(0xFFF4F7F9),
                 ),
                 child:
                     avatarUrl == null
@@ -489,7 +295,7 @@ class _ProfileHeader extends StatelessWidget {
                       displayName,
                       style: const TextStyle(
                         fontSize: 17,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                         color: Color(0xFF0D2946),
                       ),
                     ),
@@ -497,7 +303,7 @@ class _ProfileHeader extends StatelessWidget {
                     Text(
                       '@$username',
                       style: const TextStyle(
-                        color: Color(0x99000000),
+                        color: Color(0xFF607184),
                         fontSize: 12,
                       ),
                     ),
@@ -524,7 +330,7 @@ class _SectionLabel extends StatelessWidget {
     padding: const EdgeInsets.only(left: 4, bottom: 10),
     child: Text(
       label,
-      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
     ),
   );
 }
@@ -535,7 +341,7 @@ class _MenuList extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     decoration: BoxDecoration(
-      color: const Color(0xFFFFFDF8),
+      color: const Color(0xFFF4F7F9),
       border: Border.all(color: const Color(0x22000000)),
       borderRadius: BorderRadius.circular(16),
     ),
@@ -565,91 +371,16 @@ class _MenuRow extends StatelessWidget {
   );
 }
 
-class NotificationSettingsPage extends StatefulWidget {
+class NotificationSettingsPage extends StatelessWidget {
   const NotificationSettingsPage({super.key});
   @override
-  State<NotificationSettingsPage> createState() =>
-      _NotificationSettingsPageState();
+  Widget build(BuildContext context) => const PreferencesPage(privacy: false);
 }
 
-class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
-  bool matchReminders = true,
-      bookingConfirmations = true,
-      chatMessages = true,
-      offers = false,
-      news = false;
-  @override
-  Widget build(BuildContext context) => _SettingsPage(
-    title: tr('Notifications', 'الإشعارات'),
-    subtitle: tr(
-      'Choose the notifications you want to receive.',
-      'اختر الإشعارات التي تريد استلامها.',
-    ),
-    children: [
-      _SwitchItem(
-        title: tr('Match reminders', 'تذكيرات المباريات'),
-        value: matchReminders,
-        onChanged: (v) => setState(() => matchReminders = v),
-      ),
-      _SwitchItem(
-        title: tr('Booking confirmations', 'تأكيدات الحجوزات'),
-        value: bookingConfirmations,
-        onChanged: (v) => setState(() => bookingConfirmations = v),
-      ),
-      _SwitchItem(
-        title: tr('Chat messages', 'رسائل المحادثة'),
-        value: chatMessages,
-        onChanged: (v) => setState(() => chatMessages = v),
-      ),
-      _SwitchItem(
-        title: tr('Special offers', 'العروض الخاصة'),
-        value: offers,
-        onChanged: (v) => setState(() => offers = v),
-      ),
-      _SwitchItem(
-        title: tr('News and updates', 'الأخبار والتحديثات'),
-        value: news,
-        onChanged: (v) => setState(() => news = v),
-        last: true,
-      ),
-    ],
-  );
-}
-
-class PrivacySettingsPage extends StatefulWidget {
+class PrivacySettingsPage extends StatelessWidget {
   const PrivacySettingsPage({super.key});
   @override
-  State<PrivacySettingsPage> createState() => _PrivacySettingsPageState();
-}
-
-class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
-  bool privateProfile = false, hideEmail = true, friendRequests = true;
-  @override
-  Widget build(BuildContext context) => _SettingsPage(
-    title: tr('Privacy', 'الخصوصية'),
-    subtitle: tr(
-      'Control who can see and contact you.',
-      'تحكم بمن يمكنه رؤيتك والتواصل معك.',
-    ),
-    children: [
-      _SwitchItem(
-        title: tr('Private profile', 'ملف شخصي خاص'),
-        value: privateProfile,
-        onChanged: (v) => setState(() => privateProfile = v),
-      ),
-      _SwitchItem(
-        title: tr('Hide email address', 'إخفاء البريد الإلكتروني'),
-        value: hideEmail,
-        onChanged: (v) => setState(() => hideEmail = v),
-      ),
-      _SwitchItem(
-        title: tr('Allow friend requests', 'السماح بطلبات الصداقة'),
-        value: friendRequests,
-        onChanged: (v) => setState(() => friendRequests = v),
-        last: true,
-      ),
-    ],
-  );
+  Widget build(BuildContext context) => const PreferencesPage(privacy: true);
 }
 
 class AppSettingsPage extends StatelessWidget {
@@ -662,6 +393,22 @@ class AppSettingsPage extends StatelessWidget {
       _StaticItem(
         title: tr('Language', 'اللغة'),
         value: tr('Arabic / English', 'العربية / الإنجليزية'),
+        onTap: () => _chooseLanguage(context),
+      ),
+      _StaticItem(
+        title: tr(
+          'Policies and legal information',
+          'السياسات والمعلومات القانونية',
+        ),
+        onTap:
+            () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder:
+                    (_) =>
+                        LegalInformationPage(arabic: appLanguage.value == 'ar'),
+              ),
+            ),
       ),
       _StaticItem(title: tr('Theme', 'المظهر'), value: tr('System', 'النظام')),
       _StaticItem(
@@ -705,12 +452,42 @@ class SupportPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => _SettingsPage(
     title: tr('Support', 'الدعم'),
-    subtitle: tr('We are here to help.', 'نحن هنا لمساعدتك.'),
+    subtitle: tr(
+      'Support contact details are awaiting configuration.',
+      'بيانات التواصل مع الدعم بانتظار الإعداد.',
+    ),
     children: [
-      _StaticItem(title: tr('Help center', 'مركز المساعدة')),
-      _StaticItem(title: tr('Contact support', 'التواصل مع الدعم')),
+      _StaticItem(
+        title: tr('Help center', 'مركز المساعدة'),
+        onTap:
+            () => showDialog<void>(
+              context: context,
+              builder:
+                  (context) => AlertDialog(
+                    scrollable: true,
+                    title: Text(tr('Booking help', 'مساعدة الحجوزات')),
+                    content: Text(
+                      tr(
+                        'Manage your bookings from My bookings. Ordinary booking cancellation is available when at least 150 minutes remain. New individual-payment matches require 80% paid seats at 24 hours and 100% at 2 hours before the start; withdrawal is allowed before the 2-hour boundary. Host-paid and older matches retain their applicable policy shown in match details, including the 90-minute decision where applicable. Cash is currently disabled. A refund is complete only after provider confirmation.',
+                        'يمكنك إدارة حجوزاتك من حجوزاتي. يُسمح بإلغاء الحجز العادي عند بقاء 150 دقيقة أو أكثر. تتطلب المباريات الجديدة بنمط دفع كل لاعب حصته بلوغ المقاعد المدفوعة 80% قبل 24 ساعة و100% قبل ساعتين من البداية، ويُسمح بالانسحاب قبل حاجز الساعتين. تحتفظ المباريات المدفوعة من المنشئ والقديمة بسياستها المعروضة في تفاصيل المباراة، بما فيها قرار 90 دقيقة حيث ينطبق. الدفع النقدي معطل حاليًا. لا يكتمل الاسترداد إلا بعد تأكيد المزود.',
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text(tr('Close', 'إغلاق')),
+                      ),
+                    ],
+                  ),
+            ),
+      ),
+      _StaticItem(
+        title: tr('Contact support', 'التواصل مع الدعم'),
+        value: tr('Awaiting support contact', 'بانتظار بيانات الدعم'),
+      ),
       _StaticItem(
         title: tr('Report a problem', 'الإبلاغ عن مشكلة'),
+        value: tr('Awaiting support contact', 'بانتظار بيانات الدعم'),
         last: true,
       ),
     ],
@@ -732,7 +509,7 @@ class _SettingsPage extends StatelessWidget {
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(subtitle, style: const TextStyle(color: Color(0x99000000))),
+        Text(subtitle, style: const TextStyle(color: Color(0xFF607184))),
         const SizedBox(height: 22),
         _MenuList(children: children),
       ],
@@ -740,53 +517,53 @@ class _SettingsPage extends StatelessWidget {
   );
 }
 
-class _SwitchItem extends StatelessWidget {
-  const _SwitchItem({
-    required this.title,
-    required this.value,
-    required this.onChanged,
-    this.last = false,
-  });
-  final String title;
-  final bool value, last;
-  final ValueChanged<bool> onChanged;
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      SwitchListTile(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        value: value,
-        activeColor: _green,
-        onChanged: onChanged,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      ),
-      if (!last) const Divider(height: 1, indent: 16),
-    ],
-  );
-}
-
 class _StaticItem extends StatelessWidget {
-  const _StaticItem({required this.title, this.value, this.last = false});
+  const _StaticItem({
+    required this.title,
+    this.value,
+    this.last = false,
+    this.onTap,
+  });
   final String title;
   final String? value;
   final bool last;
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      ListTile(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (value != null)
-              Text(
-                value as String,
-                style: const TextStyle(color: Color(0x99000000)),
-              ),
-            const Icon(Icons.chevron_right_rounded),
-          ],
-        ),
-        onTap: () {},
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final stacked =
+              constraints.maxWidth < 340 ||
+              MediaQuery.textScalerOf(context).scale(14) > 18;
+          final detail =
+              value == null
+                  ? null
+                  : Text(
+                    value!,
+                    style: const TextStyle(color: Color(0xFF607184)),
+                  );
+          return ListTile(
+            onTap: onTap,
+            title: Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: stacked ? detail : null,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!stacked && detail != null) detail,
+                if (onTap != null)
+                  Icon(
+                    Directionality.of(context) == TextDirection.rtl
+                        ? Icons.chevron_left_rounded
+                        : Icons.chevron_right_rounded,
+                  ),
+              ],
+            ),
+          );
+        },
       ),
       if (!last) const Divider(height: 1, indent: 16),
     ],

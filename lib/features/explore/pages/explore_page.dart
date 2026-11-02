@@ -82,7 +82,7 @@ class _ExplorePageState extends State<ExplorePage> {
 
   Future<String?> _selectGameSport() => showModalBottomSheet<String>(
     context: context,
-    backgroundColor: const Color(0xFFFFFDF8),
+    backgroundColor: const Color(0xFFF4F7F9),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
@@ -98,7 +98,7 @@ class _ExplorePageState extends State<ExplorePage> {
                   tr('Choose sport', 'اختر الرياضة'),
                   style: const TextStyle(
                     fontSize: 23,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -148,7 +148,7 @@ class _ExplorePageState extends State<ExplorePage> {
                           color: AppColors.hint,
                         ),
                         filled: true,
-                        fillColor: const Color(0xFFFFFDF8),
+                        fillColor: const Color(0xFFF4F7F9),
                         contentPadding: const EdgeInsets.symmetric(vertical: 0),
                         border: _searchBorder,
                         enabledBorder: _searchBorder,
@@ -183,7 +183,7 @@ class _ExplorePageState extends State<ExplorePage> {
                   tr('Explore arenas', 'استكشف الملاعب'),
                   style: const TextStyle(
                     fontSize: 25,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const Spacer(),
@@ -273,7 +273,7 @@ class _HeaderButton extends StatelessWidget {
   Widget build(BuildContext context) => IconButton(
     onPressed: onPressed,
     style: IconButton.styleFrom(
-      backgroundColor: const Color(0xFFFFFDF8),
+      backgroundColor: const Color(0xFFF4F7F9),
       foregroundColor: AppColors.primary,
       side: const BorderSide(color: AppColors.border),
       fixedSize: const Size(46, 46),
@@ -398,7 +398,7 @@ class _ArenaCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 17,
-                                fontWeight: FontWeight.w900,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
@@ -447,7 +447,7 @@ class _ArenaCard extends StatelessWidget {
                             suffix: tr('/hour', '/ساعة'),
                             style: const TextStyle(
                               fontSize: 15,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w700,
                               color: AppColors.primary,
                             ),
                           ),
@@ -495,7 +495,7 @@ class _AudienceBadge extends StatelessWidget {
             style: TextStyle(
               color: color,
               fontSize: 11,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
@@ -509,7 +509,7 @@ class _ArenaImagePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ColoredBox(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     child: Center(
       child: Image.asset(
         'assets/images/arena_primary_emblem.png',
@@ -552,7 +552,7 @@ class _ArenaState extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
           Text(

@@ -27,6 +27,7 @@ SlotToggleResult toggleConsecutiveBookingSlot({
   required Iterable<DateTime> current,
   required DateTime slot,
   required bool unavailable,
+  Duration slotDuration = const Duration(hours: 1),
 }) {
   final selected = current.toList()..sort();
   if (unavailable) return SlotToggleResult(selected: selected);
@@ -42,8 +43,7 @@ SlotToggleResult toggleConsecutiveBookingSlot({
 
   final candidate = [...selected, slot]..sort();
   for (var index = 1; index < candidate.length; index++) {
-    if (candidate[index].difference(candidate[index - 1]) !=
-        const Duration(hours: 1)) {
+    if (candidate[index].difference(candidate[index - 1]) != slotDuration) {
       return SlotToggleResult(selected: selected, nonConsecutive: true);
     }
   }

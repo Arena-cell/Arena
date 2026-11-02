@@ -1,23 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/services/phone_auth_config.dart';
+import '../../../core/constants/supabase.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/localization/app_localizations.dart';
 import '../../../core/services/guest_session.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/oman_phone.dart';
+import '../../../main.dart';
 import '../../navigation/main_navigation_page.dart';
-import '../../onboarding/location_permission_page.dart';
+
 import 'profile_completion_page.dart';
 
-enum PhoneAuthMode { signIn, createAccount }
-
 class PhoneAuthPage extends StatefulWidget {
-  const PhoneAuthPage({super.key, required this.mode});
-
-  final PhoneAuthMode mode;
+  const PhoneAuthPage({super.key});
 
   @override
   State<PhoneAuthPage> createState() => _PhoneAuthPageState();
@@ -33,7 +31,7 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
   Timer? _resendTimer;
   int _resendSeconds = 0;
 
-  bool get _creating => widget.mode == PhoneAuthMode.createAccount;
+  final _config = PhoneAuthConfig.build(supabaseUrl);
 
   @override
   void dispose() {
@@ -45,6 +43,7 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
   }
 
   Future<void> _sendCode() async {
+    if (_loading) return;
     final phone = normalizeOmanPhone(_phone.text.trim());
     if (phone == null) {
       setState(
@@ -61,10 +60,10 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       _error = null;
     });
     try {
-      await Supabase.instance.client.auth.signInWithOtp(
-        phone: phone,
-        shouldCreateUser: _creating,
-      );
+      _config.checkPhone(phone);
+      await Supabase.instance.client.auth
+          .signInWithOtp(phone: phone, shouldCreateUser: true)
+          .timeout(const Duration(seconds: 25));
       if (!mounted) return;
       setState(() {
         _normalizedPhone = phone;
@@ -73,12 +72,23 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       _startResendCooldown();
     } on AuthException catch (error) {
       if (mounted) setState(() => _error = _authError(error.message));
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error = tr(
+                'Could not send a code. Check the connection and test-phone configuration.',
+                'تعذر إرسال الرمز. تحقق من الاتصال وإعداد رقم الاختبار.',
+              ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _verifyCode() async {
+    if (_loading) return;
     final phone = _normalizedPhone;
     final token = _otp.text.trim();
     if (phone == null || !RegExp(r'^\d{6}$').hasMatch(token)) {
@@ -96,28 +106,20 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       _error = null;
     });
     try {
-      final response = await Supabase.instance.client.auth.verifyOTP(
-        phone: phone,
-        token: token,
-        type: OtpType.sms,
-      );
+      final response = await Supabase.instance.client.auth
+          .verifyOTP(
+            phone: phone,
+            token: _config.verificationToken(phone, token),
+            type: OtpType.sms,
+          )
+          .timeout(const Duration(seconds: 25));
       if (response.user == null) throw const AuthException('OTP_FAILED');
       await GuestSession.disable();
-      final profile =
-          await Supabase.instance.client
-              .from('profiles')
-              .select(
-                'username,first_name,last_name,gender,onboarding_complete',
-              )
-              .eq('id', response.user?.id ?? '')
-              .maybeSingle();
+      final complete = await Supabase.instance.client
+          .rpc('my_profile_complete')
+          .timeout(const Duration(seconds: 20));
       if (!mounted) return;
-      final needsProfile =
-          _creating ||
-          profile?['username'] == null ||
-          profile?['gender'] == null ||
-          profile?['onboarding_complete'] != true;
-      if (needsProfile) {
+      if (complete != true) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute<void>(
             builder: (_) => const ProfileCompletionPage(),
@@ -129,12 +131,16 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
       }
     } on AuthException catch (error) {
       if (mounted) setState(() => _error = _authError(error.message));
-    } on PostgrestException {
-      if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (_) => const ProfileCompletionPage()),
-        (_) => false,
-      );
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error = tr(
+                'Could not verify the account. Check your connection and retry.',
+                'تعذر التحقق من الحساب. تحقق من الاتصال وحاول مجدداً.',
+              ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -159,20 +165,35 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
   }
 
   Future<void> _finishLogin() async {
-    final preferences = await SharedPreferences.getInstance();
     if (!mounted) return;
-    final locationSeen =
-        preferences.getBool(LocationPermissionPage.seenKey) ?? false;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(
-        builder:
-            (_) =>
-                locationSeen
-                    ? const MainNavigationPage()
-                    : const LocationPermissionPage(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const MainNavigationPage()),
       (_) => false,
     );
+  }
+
+  Future<void> _continueAsGuest() async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await GuestSession.enable();
+      await _finishLogin();
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _error = tr(
+                'Could not start guest browsing. Try again.',
+                'تعذر بدء التصفح كضيف. حاول مجددًا.',
+              ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -180,18 +201,36 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     backgroundColor: AppColors.background,
     appBar: AppBar(
       backgroundColor: AppColors.background,
-      title: Text(
-        _creating
-            ? tr('Create account', 'إنشاء حساب')
-            : tr('Sign in', 'تسجيل الدخول'),
-      ),
+      title: Text(tr('Welcome to Arena', 'مرحبًا بك في أرينا')),
+      actions: [
+        TextButton(
+          onPressed:
+              _loading
+                  ? null
+                  : () =>
+                      setAppLanguage(appLanguage.value == 'ar' ? 'en' : 'ar'),
+          child: Text(appLanguage.value == 'ar' ? 'English' : 'العربية'),
+        ),
+      ],
     ),
     body: SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
         children: [
-          Image.asset('assets/images/arena_logo_transparent.png', height: 116),
+          Image.asset(
+            'assets/images/arena_splash_logo.png',
+            height: 180,
+            fit: BoxFit.contain,
+            semanticLabel: 'Arena',
+          ),
           const SizedBox(height: 28),
+          if (_config.developmentOtp)
+            Text(
+              tr(
+                'Development test phone only — any 6 digits are accepted by this test screen.',
+                'وضع تطوير لرقم الاختبار فقط — أدخل أي 6 أرقام في هذه الشاشة.',
+              ),
+            ),
           if (_step == 0) _phoneStep(),
           if (_step == 1) _otpStep(),
           if (_error != null) ...[
@@ -212,13 +251,13 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     children: [
       Text(
         tr('Enter your mobile number', 'أدخل رقم هاتفك'),
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
       Text(
         tr(
-          'We will send a verification code by SMS.',
-          'سنرسل رمز تحقق عبر رسالة نصية.',
+          'We will verify your number by SMS. If you are new, you will complete your details next.',
+          'سنتحقق من رقمك برسالة نصية. إذا كنت مستخدمًا جديدًا، ستكمل بياناتك بعدها.',
         ),
       ),
       const SizedBox(height: 22),
@@ -241,6 +280,11 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
               : tr('Send code', 'إرسال الرمز'),
         ),
       ),
+      const SizedBox(height: 12),
+      OutlinedButton(
+        onPressed: _loading ? null : _continueAsGuest,
+        child: Text(tr('Continue as guest', 'الدخول كضيف')),
+      ),
     ],
   );
 
@@ -249,7 +293,7 @@ class _PhoneAuthPageState extends State<PhoneAuthPage> {
     children: [
       Text(
         tr('Verification code', 'رمز التحقق'),
-        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),
       Text(

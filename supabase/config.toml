@@ -1,0 +1,31 @@
+[functions.arena-payment]
+verify_jwt = true
+
+[functions.thawani-webhook]
+verify_jwt = false
+
+[functions.payment-reconcile]
+verify_jwt = false
+
+# Shared-secret server jobs; handlers fail closed when their secret is missing.
+[functions.arena-scheduler]
+verify_jwt = false
+
+[functions.push-notifications]
+verify_jwt = false
+
+# Recovery uses a verified user JWT plus one-use backup codes. Disabled by
+# ARENA_ADMIN_MFA_RECOVERY_ENABLED until explicit acceptance.
+[functions.admin-mfa-recovery]
+verify_jwt = true
+
+[functions.image-upload]
+verify_jwt = true
+
+# New local-only preparations. Public endpoint sends SMS only after registry,
+# provider-readiness and rate-limit checks; it never issues a session itself.
+[functions.owner-phone-auth]
+verify_jwt = false
+
+[functions.admin-owner-accounts]
+verify_jwt = true

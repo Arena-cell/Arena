@@ -21,7 +21,7 @@ class GamesPage extends StatefulWidget {
 }
 
 class _GamesPageState extends State<GamesPage> {
-  static const _background = Color(0xFFFFFDF8);
+  static const _background = Color(0xFFF4F7F9);
   final _searchController = TextEditingController();
   late Future<List<Map<String, dynamic>>> _matches;
   late DateTime _today;
@@ -160,7 +160,7 @@ class _GamesPageState extends State<GamesPage> {
     if (!mounted) return;
     final sport = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: const Color(0xFFFFFDF8),
+      backgroundColor: const Color(0xFFF4F7F9),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -175,7 +175,7 @@ class _GamesPageState extends State<GamesPage> {
                     tr('Choose sport', 'اختر الرياضة'),
                     style: const TextStyle(
                       fontSize: 23,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   ListTile(
@@ -237,22 +237,22 @@ class _GamesPageState extends State<GamesPage> {
                         decoration: InputDecoration(
                           hintText: tr('Seeb, Muscat', 'السيب، مسقط'),
                           hintStyle: const TextStyle(
-                            color: Color(0x99000000),
+                            color: Color(0xFF607184),
                             fontWeight: FontWeight.w500,
                           ),
                           prefixIcon: const Icon(
                             Icons.search_rounded,
                             size: 20,
-                            color: Color(0x99000000),
+                            color: Color(0xFF607184),
                           ),
                           filled: true,
-                          fillColor: const Color(0xFFFFFDF8),
+                          fillColor: const Color(0xFFF4F7F9),
                           contentPadding: EdgeInsets.zero,
                           border: _searchBorder,
                           enabledBorder: _searchBorder,
                           focusedBorder: _searchBorder.copyWith(
                             borderSide: const BorderSide(
-                              color: Color(0x99000000),
+                              color: Color(0xFF607184),
                             ),
                           ),
                         ),
@@ -336,7 +336,7 @@ class _GamesPageState extends State<GamesPage> {
                   style: const TextStyle(
                     color: Color(0xFF0D2946),
                     fontSize: 21,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -394,7 +394,7 @@ class _GamesPageState extends State<GamesPage> {
 
   static final _searchBorder = OutlineInputBorder(
     borderRadius: BorderRadius.circular(16),
-    borderSide: const BorderSide(color: Color(0x52000000)),
+    borderSide: const BorderSide(color: Color(0xFFDCE3E9)),
   );
 }
 
@@ -415,12 +415,12 @@ class _DateTile extends StatelessWidget {
     width: width,
     height: 47,
     child: Material(
-      color: selected ? const Color(0xFFFFFDF8) : Colors.transparent,
+      color: selected ? const Color(0xFFF4F7F9) : Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side:
             selected
-                ? const BorderSide(color: Color(0x99000000))
+                ? const BorderSide(color: Color(0xFF607184))
                 : BorderSide.none,
       ),
       child: InkWell(
@@ -481,8 +481,8 @@ class _GameCard extends StatelessWidget {
     final id = match['id']?.toString().trim() ?? '';
     final avatarUrl = profile['avatar_url'] as String?;
 
-    return SizedBox(
-      height: 165,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 165),
       child: Material(
         color: surface,
         elevation: 0,
@@ -515,6 +515,7 @@ class _GameCard extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(17, 14, 17, 11),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -542,7 +543,7 @@ class _GameCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 14,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           color: Color(0xFF000000),
                         ),
                       ),
@@ -581,13 +582,13 @@ class _GameCard extends StatelessWidget {
                         vertical: 5,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFFDF8),
+                        color: const Color(0xFFF4F7F9),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Text(
                         '$joined/$maxPlayers',
                         style: const TextStyle(
-                          color: Color(0x99000000),
+                          color: Color(0xFF607184),
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -644,7 +645,7 @@ class _HostAvatar extends StatelessWidget {
               ? const Icon(
                 Icons.person_rounded,
                 size: 13,
-                color: Color(0xFFFFFDF8),
+                color: Color(0xFFF4F7F9),
               )
               : null,
     );
@@ -701,13 +702,13 @@ class _GamesState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 52, color: const Color(0x99000000)),
+              Icon(icon, size: 52, color: const Color(0xFF607184)),
               const SizedBox(height: 12),
               Text(
                 title,
                 style: const TextStyle(
                   fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF000000),
                 ),
               ),
@@ -716,7 +717,7 @@ class _GamesState extends StatelessWidget {
                 subtitle,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Color(0x99000000),
+                  color: Color(0xFF607184),
                   fontWeight: FontWeight.w500,
                 ),
               ),

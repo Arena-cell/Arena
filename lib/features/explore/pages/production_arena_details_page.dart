@@ -152,7 +152,7 @@ class _ArenaDetailsState extends State<_ArenaDetails> {
                                   color:
                                       i == page
                                           ? AppColors.navy
-                                          : const Color(0x99000000),
+                                          : const Color(0xFF607184),
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -186,7 +186,7 @@ class _ArenaDetailsState extends State<_ArenaDetails> {
                           ),
                           style: const TextStyle(
                             fontSize: 34,
-                            fontWeight: FontWeight.w900,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                         const SizedBox(height: 34),
@@ -196,7 +196,7 @@ class _ArenaDetailsState extends State<_ArenaDetails> {
                           style: const TextStyle(
                             color: AppColors.navy,
                             fontSize: 28,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                         const SizedBox(height: 34),
@@ -209,7 +209,7 @@ class _ArenaDetailsState extends State<_ArenaDetails> {
                           ),
                           style: const TextStyle(
                             fontSize: 21,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                         const SizedBox(height: 20),
@@ -376,7 +376,7 @@ class _ImagePlaceholder extends StatelessWidget {
   const _ImagePlaceholder();
   @override
   Widget build(BuildContext context) => ColoredBox(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     child: Center(
       child: Image.asset(
         'assets/images/arena_primary_emblem.png',
@@ -400,7 +400,7 @@ class _CircleAction extends StatelessWidget {
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Material(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     shape: const CircleBorder(),
     child: IconButton(onPressed: onTap, icon: Icon(icon)),
   );
@@ -457,7 +457,7 @@ class _FavoriteButtonState extends State<_FavoriteButton> {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     borderRadius: BorderRadius.circular(14),
     child: IconButton(
       onPressed: favorite == null ? null : _toggle,
@@ -496,7 +496,7 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
             .toList();
     if (reviewerIds.isNotEmpty) {
       final profileRows = await client
-          .from('profiles')
+          .from('public_profiles')
           .select('id,first_name,display_name,avatar_url')
           .inFilter('id', reviewerIds);
       final profiles = {
@@ -646,7 +646,7 @@ class _ReviewsSectionState extends State<_ReviewsSection> {
                   tr('Player reviews', 'تقييمات اللاعبين'),
                   style: const TextStyle(
                     fontSize: 21,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),

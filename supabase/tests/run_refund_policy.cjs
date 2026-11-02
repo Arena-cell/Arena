@@ -1,0 +1,78 @@
+// Isolated loopback database only. Provider outcomes are test fakes, never hosted.
+const fs=require('node:fs'),cp=require('node:child_process'),assert=require('node:assert/strict'),crypto=require('node:crypto');
+process.chdir(require('node:path').resolve(__dirname,'../..'));
+const db=fs.readFileSync('build/phase1-test-db.txt','utf8').trim();if(!/^arena_phase1_test_\d+$/.test(db))throw Error('Local DB required');
+const exe='C:/Program Files/PostgreSQL/18/bin/psql.exe',args=['-X','-h','127.0.0.1','-p','55439','-U','postgres','-d',db,'-v','ON_ERROR_STOP=1','-qAt'];
+const sql=s=>{try{return cp.execFileSync(exe,args,{input:s,encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim()}catch(e){throw Error(e.stderr.toString())}};
+const q=s=>`'${String(s).replaceAll("'","''")}'`,key=()=>crypto.randomUUID(),uid=n=>`10000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+const as=(n,s)=>`set role authenticated;set request.jwt.claim.sub=${q(uid(n))};${s}`,run=(n,s)=>sql(as(n,s));
+const parallel=ss=>Promise.all(ss.map(s=>new Promise(resolve=>{let error='';const p=cp.spawn(exe,args);p.stdout.resume();p.stderr.on('data',d=>error+=d);p.on('close',code=>resolve({ok:code===0,error}));p.stdin.end(s)})));
+let checks=0;const test=(name,f)=>{f();checks++;console.log('PASS '+name)};
+function fixture(method='cash',purpose='booking',mode='pay_individually'){
+ const arena=key();sql(`insert into arenas(id,name,location,price_per_hour,opening_time,closing_time,court_count,audience_gender,is_active) values(${q(arena)},'Policy local','Muscat',10,'00:00','23:59',2,'men',true)`);
+ const water=run(4,`select admin_set_arena_addon(${q(arena)},'water',true,500,10)`),rack=run(4,`select admin_set_arena_addon(${q(arena)},'racket',true,1000,8)`);
+ const request={purpose,payment_method:method,payment_mode:mode,capacity:5,name:'Policy local',sport:'football',arena_id:arena,starts_at:'2039-01-01T10:00:00+04:00',ends_at:'2039-01-01T11:00:00+04:00',addons:[{id:water,quantity:2},{id:rack,quantity:6}]};
+ const order=JSON.parse(run(1,`select create_checkout(${q(JSON.stringify(request))},${q(key())})`));return {order,water,rack,arena,request};
+}
+const verify=o=>JSON.parse(sql(`set role service_role;select payment_reconcile(${q(o.id)},${q('local_policy_'+o.id)},${q(o.id)},'OMR',${o.amount_due_baisa},'paid','LOCAL_FAKE',${q('policy_event_'+o.id)})`));
+const cancel=id=>run(1,`select cancel_arena_booking(${q(id)},'Policy test')`);
+(async()=>{try{
+ assert.ok(sql('show data_directory').replaceAll('\\','/').toLowerCase().endsWith('/playon/build/phase1-pgdata'));
+ for(const [minutes,allowed] of [[180,true],[150,true],[149,false],[-1,false]])test(`Boundary helper ${minutes} minutes`,()=>assert.equal(sql(`select arena_private.booking_cancel_allowed('2040-01-01 10:00Z'::timestamptz+interval '${minutes} minutes','2040-01-01 10:00Z')`),allowed?'t':'f'));
+ const cash=fixture();cancel(cash.order.booking_id);cancel(cash.order.booking_id);
+ test('Cash cancelled without refund',()=>{assert.equal(sql(`select status from bookings where id=${q(cash.order.booking_id)}`),'cancelled');assert.equal(sql(`select count(*) from payment_refunds where order_id=${q(cash.order.id)}`),'0')});
+ test('Water restored once, snapshots preserved',()=>{assert.equal(sql(`select stock from arena_addons where id=${q(cash.water)}`),'10');assert.equal(sql(`select unit_amount_baisa||':'||restored_quantity from booking_addons where order_id=${q(cash.order.id)} and kind='consumable'`),'500:2')});
+ test('Rentals and Court released',()=>{assert.equal(sql(`select arena_private.addon_available(${q(cash.rack)},'2039-01-01 10:00+04','2039-01-01 11:00+04')`),'8');assert.equal(sql(`select count(*) from court_reservations where source_id=${q(cash.order.booking_id)}`),'0')});
+ const delivered=fixture();const addon=sql(`select id from booking_addons where order_id=${q(delivered.order.id)} and kind='consumable'`);run(4,`select admin_record_addon_delivery(${q(addon)},1)`);cancel(delivered.order.booking_id);
+ test('Delivered consumable never returned',()=>assert.equal(sql(`select stock from arena_addons where id=${q(delivered.water)}`),'9'));
+ const unknown=fixture();sql(`update booking_addons set inventory_tracked=false,delivered_quantity=null,stock_debited_quantity=0 where order_id=${q(unknown.order.id)}`);cancel(unknown.order.booking_id);
+ test('Unknown historical delivery requires review, no invented stock',()=>assert.equal(sql(`select stock from arena_addons where id=${q(unknown.water)}`),'8'));
+ const paid=fixture('card');paid.order=verify(paid.order);cancel(paid.order.booking_id);
+ test('Paid full refund includes addons, not successful',()=>{assert.equal(sql(`select amount_baisa||':'||status from payment_refunds where order_id=${q(paid.order.id)}`),'17000:requested');assert.equal(sql(`select payment_status||':'||refunded_amount_baisa from checkout_orders where id=${q(paid.order.id)}`),'paid:0')});
+ verify(paid.order);cancel(paid.order.booking_id);test('Duplicate paid event/cancellation creates one refund',()=>assert.equal(sql(`select count(*) from payment_refunds where order_id=${q(paid.order.id)}`),'1'));
+ const pending=fixture('card');run(1,`select cancel_pending_booking_checkout(${q(pending.order.id)})`);verify(pending.order);verify(pending.order);
+ test('Late captured pending cancellation refunds without booking',()=>{assert.equal(sql(`select count(*) from bookings where checkout_order_id=${q(pending.order.id)}`),'0');assert.equal(sql(`select amount_baisa||':'||status from payment_refunds where order_id=${q(pending.order.id)}`),'17000:requested');assert.equal(sql(`select stock from arena_addons where id=${q(pending.water)}`),'10')});
+ for(const minutes of [180,149,-1]){const b=fixture();sql(`update bookings set starts_at=clock_timestamp()+interval '${minutes} minutes',ends_at=clock_timestamp()+interval '${minutes+60} minutes' where id=${q(b.order.booking_id)}`);test(`User RPC ${minutes} minutes`,()=>minutes>=150?cancel(b.order.booking_id):assert.throws(()=>cancel(b.order.booking_id),/DEADLINE_PASSED/));}
+ const security=fixture();test('Another user cannot cancel',()=>assert.throws(()=>run(2,`select cancel_arena_booking(${q(security.order.booking_id)},'Forged')`),/CANCELLATION_NOT_ALLOWED/));
+ test('Direct booking/payment/refund/stock write denied',()=>{for(const query of [`update bookings set status='cancelled' where id=${q(security.order.booking_id)}`,`update checkout_orders set payment_status='paid' where id=${q(security.order.id)}`,`update booking_addons set restored_quantity=2`,`insert into payment_refunds(order_id,request_key,original_amount_baisa,amount_baisa,reason) values(${q(security.order.id)},${q(key())},17000,17000,'forged')`])assert.throws(()=>run(1,query),/permission denied/)});
+ test('User/Owner cannot record delivery',()=>{for(const n of [1,3])assert.throws(()=>run(n,`select admin_record_addon_delivery(${q(addon)},2)`),/ADMIN_ONLY/)});
+ const concurrent=fixture();const rr=await parallel([as(1,`select cancel_arena_booking(${q(concurrent.order.booking_id)},'Concurrent')`),as(1,`select cancel_arena_booking(${q(concurrent.order.booking_id)},'Concurrent')`)]);
+ test('Concurrent cancellation restores once',()=>{assert.ok(rr.every(r=>r.ok),JSON.stringify(rr));assert.equal(sql(`select stock from arena_addons where id=${q(concurrent.water)}`),'10')});
+ const match=fixture('card','match');match.order=verify(match.order);const p=verify(JSON.parse(run(2,`select create_participant_checkout(${q(match.order.match_id)},${q(key())})`)));run(2,`select leave_match(${q(match.order.match_id)})`);
+ test('Individual withdrawal full refund and excludes member',()=>{assert.equal(sql(`select amount_baisa||':'||status from payment_refunds where order_id=${q(p.id)}`),`${p.amount_due_baisa}:requested`);assert.equal(sql(`select count(*) from match_players where match_id=${q(match.order.match_id)} and user_id=${q(uid(2))}`),'0')});
+ const newSeat=JSON.parse(run(2,`select create_participant_checkout(${q(match.order.match_id)},${q(key())})`));test('Rejoin requires new pending entitlement',()=>{assert.notEqual(newSeat.id,p.id);assert.equal(newSeat.payment_status,'pending');assert.throws(()=>run(2,`select join_match(${q(match.order.match_id)},${q(uid(2))})`),/PARTICIPANT_PAYMENT_REQUIRED/)});
+ test('Retry old request never creates another charge',()=>assert.equal(JSON.parse(run(2,`select create_participant_checkout(${q(match.order.match_id)},${q(p.request_key)})`)).id,p.id));
+ const full=fixture('card','match','host_pays_all');full.order=verify(full.order);run(2,`select create_participant_checkout(${q(full.order.match_id)},${q(key())})`);run(2,`select leave_match(${q(full.order.match_id)})`);
+ test('Covered participant no refund',()=>assert.equal(sql(`select count(*) from payment_refunds r join checkout_orders o on o.id=r.order_id where o.match_id=${q(full.order.match_id)}`),'0'));
+ test('Legacy host membership deletion cannot bypass whole cancellation',()=>assert.throws(()=>sql(`set request.jwt.claim.sub=${q(uid(1))};delete from match_players where match_id=${q(full.order.match_id)} and user_id=${q(uid(1))}`),/HOST_PAYS_ALL_USE_MATCH_CANCELLATION/));
+ sql(`update matches set starts_at=now()+interval '80 minutes',ends_at=now()+interval '140 minutes' where id=${q(full.order.match_id)};select arena_private.decide_match(${q(full.order.match_id)})`);
+ test('Automatic host cancellation full refund and addon restoration',()=>{assert.equal(sql(`select amount_baisa||':'||status from payment_refunds where order_id=${q(full.order.id)}`),'17000:requested');assert.equal(sql(`select stock from arena_addons where id=${q(full.water)}`),'10')});
+ test('Match boundary withdrawal cannot bypass final decision',()=>assert.throws(()=>run(2,`select join_match(${q(full.order.match_id)},${q(uid(2))})`),/MATCH_NOT_FOUND|MATCH_UNAVAILABLE/));
+ const hostSelf=fixture('card','match');hostSelf.order=verify(hostSelf.order);run(1,`select leave_match(${q(hostSelf.order.match_id)})`);
+ const replacement=JSON.parse(run(2,`select create_participant_checkout(${q(hostSelf.order.match_id)},${q(key())})`));
+ test('Individual host withdrawal retains match and releases only revoked seat',()=>{assert.equal(replacement.seat_index,0);assert.equal(sql(`select count(*) from payment_refunds where order_id=${q(hostSelf.order.id)}`),'1')});
+ test('Active match retains rental capacity while individual host refund pending',()=>{assert.equal(sql(`select arena_private.addon_available(${q(hostSelf.rack)},'2039-01-01 10:00+04','2039-01-01 11:00+04')`),'2');assert.throws(()=>run(4,`select admin_set_arena_addon(${q(hostSelf.arena)},'racket',true,1000,5)`),/STOCK_BELOW_RESERVED_QUANTITY/)});
+ sql(`update matches set starts_at=now()+interval '80 minutes',ends_at=now()+interval '140 minutes' where id=${q(hostSelf.order.match_id)}`);
+ test('Withdrawn individual host cannot stall 90/80 decision',()=>assert.equal(sql(`select arena_private.decide_match(${q(hostSelf.order.match_id)})`),'cancelled'));
+ const blocked=fixture();run(4,`select owner_reserve(${q(blocked.arena)},'2039-01-01 10:00+04','2039-01-01 11:00+04',null,null,'Policy block',true,${q(key())})`);cancel(blocked.order.booking_id);
+ test('Existing block survives cancellation; only original court becomes available',()=>{assert.equal(sql(`select count(*) from court_reservations where arena_id=${q(blocked.arena)}`),'1');const next=JSON.parse(run(2,`select create_checkout(${q(JSON.stringify({...blocked.request,addons:[]}))},${q(key())})`));assert.ok(next.booking_id);assert.equal(sql(`select count(*) from court_reservations where arena_id=${q(blocked.arena)}`),'2')});
+ test('Owner cannot cancel another arena',()=>assert.throws(()=>run(3,`select owner_cancel_booking(${q(security.order.booking_id)},'Forged owner')`),/CANCELLATION_NOT_ALLOWED/));
+ const legacy=fixture();sql(`update bookings set starts_at=clock_timestamp()+interval '149 minutes',ends_at=clock_timestamp()+interval '209 minutes' where id=${q(legacy.order.booking_id)}`);
+ test('Legacy definer update still enforces server deadline',()=>assert.throws(()=>sql(`set request.jwt.claim.sub=${q(uid(1))};update bookings set status='cancelled' where id=${q(legacy.order.booking_id)}`),/DEADLINE_PASSED/));
+ const lateRequest=fixture('card');sql(`update checkout_orders set starts_at=clock_timestamp()+interval '149 minutes',ends_at=clock_timestamp()+interval '209 minutes' where id=${q(lateRequest.order.id)}`);
+ test('Legacy checkout cancellation cannot bypass 150 minutes',()=>assert.throws(()=>run(1,`select cancel_unstarted_checkout(${q(lateRequest.order.id)})`),/DEADLINE_PASSED/));
+ const inventoryRace=fixture();const ir=await parallel([as(1,`select cancel_arena_booking(${q(inventoryRace.order.booking_id)},'Inventory race')`),as(4,`select admin_set_arena_addon(${q(inventoryRace.arena)},'water',true,500,10)`)]);
+ test('Cancellation versus inventory edit uses existing arena lock',()=>{assert.ok(ir.every(r=>r.ok),JSON.stringify(ir));assert.ok(['10','12'].includes(sql(`select stock from arena_addons where id=${q(inventoryRace.water)}`)));assert.equal(sql(`select restored_quantity from booking_addons where order_id=${q(inventoryRace.order.id)} and kind='consumable'`),'2')});
+ test('Refund amount manipulation denied',()=>assert.throws(()=>run(1,`select request_payment_refund(${q(paid.order.id)},999999,'forged',${q(key())})`),/ADMIN_ONLY/));
+ test('Admin cannot exceed already reserved full refund',()=>assert.throws(()=>run(4,`select request_payment_refund(${q(paid.order.id)},1,'extra',${q(key())})`),/REFUND_EXCEEDS_PAYMENT/));
+ const refundId=sql(`select id from payment_refunds where order_id=${q(paid.order.id)}`);
+ sql(`set role service_role;select payment_confirm_refund(${q(refundId)},${q('LOCAL_FAKE_POLICY_REFUND_'+refundId)},17000,true);select payment_confirm_refund(${q(refundId)},${q('LOCAL_FAKE_POLICY_REFUND_'+refundId)},17000,true)`);
+ test('Verified local fake refund completion idempotent, ledger retained',()=>{assert.equal(sql(`select payment_status||':'||refunded_amount_baisa from checkout_orders where id=${q(paid.order.id)}`),'refunded:17000');assert.equal(sql(`select count(*) from bookings where id=${q(paid.order.booking_id)}`),'1')});
+ const deadline=fixture(),holder='policy_deadline_'+key();
+ sql(`update bookings set starts_at=clock_timestamp()+interval '150 minutes 1 second',ends_at=clock_timestamp()+interval '210 minutes 1 second' where id=${q(deadline.order.booking_id)}`);
+ const hold=parallel([`begin;set application_name=${q(holder)};select pg_advisory_xact_lock(hashtextextended(${q(deadline.arena)},0));select pg_sleep(2);commit;`]);
+ for(let attempt=0;attempt<100;attempt++){if(sql(`select exists(select 1 from pg_locks l join pg_stat_activity a on a.pid=l.pid where a.application_name=${q(holder)} and l.locktype='advisory' and l.granted)`)==='t')break;if(attempt===99)throw Error('Deadline lock fixture failed');await new Promise(r=>setTimeout(r,20));}
+ const deadlineResult=await parallel([as(1,`select cancel_arena_booking(${q(deadline.order.booking_id)},'Deadline race')`)]);await hold;
+ test('Cancellation waiting across cutoff checks server clock after lock',()=>{assert.equal(deadlineResult[0].ok,false);assert.match(deadlineResult[0].error,/DEADLINE_PASSED/);assert.equal(sql(`select status from bookings where id=${q(deadline.order.booking_id)}`),'upcoming');assert.equal(sql(`select stock from arena_addons where id=${q(deadline.water)}`),'8')});
+ console.log(`${checks} refund policy checks passed; actual provider refunds NOT TESTED.`);
+}catch(e){console.error(e.message);process.exitCode=1}})();

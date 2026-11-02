@@ -27,7 +27,6 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
         await client
             .from('profiles')
             .update({
-              'onboarding_complete': true,
               if (position != null) 'latitude': position.latitude,
               if (position != null) 'longitude': position.longitude,
             })
@@ -138,7 +137,7 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                       width: 210,
                       height: 210,
                       decoration: const BoxDecoration(
-                        color: Color(0xFFFFFDF8),
+                        color: Color(0xFFF4F7F9),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
@@ -152,7 +151,7 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                       width: 112,
                       height: 112,
                       decoration: const BoxDecoration(
-                        color: Color(0xFFFFFDF8),
+                        color: Color(0xFFF4F7F9),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(Icons.location_on, size: 58),
@@ -168,7 +167,7 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                         color: AppColors.navy,
                         fontSize: 38,
                         height: 1.05,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 22),
@@ -197,7 +196,7 @@ class _LocationPermissionPageState extends State<LocationPermissionPage> {
                                 dimension: 22,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Color(0xFFFFFDF8),
+                                  color: Color(0xFFF4F7F9),
                                 ),
                               )
                               : Text(tr('ALLOW NOW', 'السماح الآن')),

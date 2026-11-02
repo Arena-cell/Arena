@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/utils/oman_time.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/theme/app_colors.dart';
@@ -149,12 +150,13 @@ class _ScheduleMonthCalendar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final arabic = context.isArabic;
-    final today = DateUtils.dateOnly(DateTime.now());
-    final currentMonth = DateTime(today.year, today.month);
-    final lastMonth = DateTime(today.year, today.month + 12);
+    final today = omanDateOnly(toOmanTime(DateTime.now()));
+    final currentMonth = DateTime.utc(today.year, today.month);
+    final lastMonth = DateTime.utc(today.year, today.month + 12);
     final firstWeekday = arabic ? DateTime.saturday : DateTime.sunday;
     final offset = (visibleMonth.weekday - firstWeekday + 7) % 7;
-    final dayCount = DateTime(visibleMonth.year, visibleMonth.month + 1, 0).day;
+    final dayCount =
+        DateTime.utc(visibleMonth.year, visibleMonth.month + 1, 0).day;
     final requiredCells = offset + dayCount;
     final cellCount = ((requiredCells + 6) ~/ 7) * 7;
     final weekdays =
@@ -271,7 +273,7 @@ class _ScheduleMonthCalendar extends StatelessWidget {
                 if (dayNumber < 1 || dayNumber > dayCount) {
                   return const SizedBox.shrink();
                 }
-                final date = DateTime(
+                final date = DateTime.utc(
                   visibleMonth.year,
                   visibleMonth.month,
                   dayNumber,
@@ -450,11 +452,11 @@ class _ScheduleSummary extends StatelessWidget {
           TimeOfDay.fromDateTime(value),
           alwaysUse24HourFormat: false,
         );
-    final end = slots.last.add(const Duration(hours: 1));
+    final end = slots.last.add(const Duration(minutes: 30));
     final duration =
-        slots.length == 1
+        slots.length == 2
             ? tr('One hour', 'ساعة واحدة')
-            : tr('${slots.length} hours', '${slots.length} ساعات');
+            : tr('${slots.length / 2} hours', '${slots.length / 2} ساعات');
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

@@ -1,4 +1,8 @@
+import '../../bookings/pages/checkout_page.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../../core/utils/oman_time.dart';
+import '../../../core/utils/arena_availability.dart';
 import '../../../core/localization/app_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -6,7 +10,6 @@ import '../../../core/services/guest_session.dart';
 import '../../../core/services/production_repository.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/booking_slot_selection.dart';
-import '../../../core/utils/omr_currency.dart';
 import '../../../core/utils/request_id.dart';
 import '../../../shared/widgets/arena_schedule_picker.dart';
 
@@ -30,56 +33,58 @@ class _CreateGamePageState extends State<CreateGamePage> {
   Map<String, dynamic>? _arena;
   int _step = 0;
   int _maxPlayers = 10;
-  String _payment = 'Cash';
   bool _private = false;
   bool _indoor = false;
   String _gender = 'Men';
   bool _showJoinedPlayers = true;
   bool _saving = false;
-  late final String _requestId;
+  late String _requestId;
+  Timer? _availabilityTimer;
   late DateTime _visibleMonth;
   DateTime? _selectedScheduleDate;
   List<DateTime> _selectedScheduleSlots = [];
-  List<BookingInterval> _busyIntervals = [];
+  List<ArenaAvailabilitySlot> _serverSlots = [];
+  int _availabilityRequest = 0;
+  bool _checkingSelection = false;
   bool _loadingAvailability = false;
   String? _availabilityError;
 
   @override
   void initState() {
     super.initState();
-    _start = _roundToBookingSlot(DateTime.now().add(const Duration(hours: 2)));
-    _end = _start.add(const Duration(hours: 1));
-    _visibleMonth = DateTime(_start.year, _start.month);
+    _start = _roundToBookingSlot(
+      toOmanTime(DateTime.now()).add(const Duration(hours: 2)),
+    );
+    _end = _start.add(bookingSlotDuration);
+    _visibleMonth = DateTime.utc(_start.year, _start.month);
     _arenas = ProductionRepository.arenas(sport: widget.sport);
     _requestId = newRequestId();
+    _availabilityTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted && _arena != null && !_loadingAvailability && !_saving) {
+        _loadScheduleAvailability();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _availabilityTimer?.cancel();
     _name.dispose();
     _description.dispose();
     _rules.dispose();
     super.dispose();
   }
 
-  double get _price {
-    final arena = _arena;
-    if (arena == null) return 0;
-    final hourly = normalizeOmrPrice(arena['price_per_hour'] as num);
-    return roundOmr(
-      hourly * _end.difference(_start).inMinutes / 60 / _maxPlayers,
-    );
-  }
-
   void _selectArena(Map<String, dynamic> arena) {
-    final first = _firstFutureHourlySlot(arena);
+    final first = toOmanTime(DateTime.now());
     setState(() {
       _arena = arena;
       _start = first;
-      _end = first.add(const Duration(hours: 1));
-      _selectedScheduleDate = DateUtils.dateOnly(first);
-      _selectedScheduleSlots = [first];
-      _visibleMonth = DateTime(first.year, first.month);
+      _end = first.add(bookingSlotDuration);
+      _selectedScheduleDate = omanDateOnly(first);
+      _selectedScheduleSlots = [];
+      _visibleMonth = DateTime.utc(first.year, first.month);
+      _serverSlots = [];
       _gender = arena['audience_gender'] == 'women' ? 'Women' : 'Men';
     });
     _loadScheduleAvailability();
@@ -92,42 +97,28 @@ class _CreateGamePageState extends State<CreateGamePage> {
       _loadingAvailability = true;
       _availabilityError = null;
     });
+    final request = ++_availabilityRequest;
     final from = _visibleMonth;
-    final to = DateTime(from.year, from.month + 1, 2);
+    final to = DateTime.utc(from.year, from.month + 1, 1);
     try {
-      final intervals = await ProductionRepository.arenaBusyIntervals(
+      final intervals = await ProductionRepository.arenaAvailability(
         arenaId: '${arena['id']}',
         from: from,
         to: to,
       );
-      if (!mounted || _arena?['id'] != arena['id']) return;
-      var nextSelection = List<DateTime>.from(_selectedScheduleSlots);
-      final hasConflict = nextSelection.any(
-        (slot) =>
-            !slot.isAfter(DateTime.now()) || isBookingSlotBusy(slot, intervals),
-      );
-      if (hasConflict) nextSelection = [];
-      final selectedDate = _selectedScheduleDate;
-      if (nextSelection.isEmpty && selectedDate != null) {
-        final available = _hourlySlotsForArena(arena, selectedDate).where(
-          (slot) =>
-              slot.isAfter(DateTime.now()) &&
-              !isBookingSlotBusy(slot, intervals),
-        );
-        if (available.isNotEmpty) nextSelection = [available.first];
+      if (!mounted ||
+          request != _availabilityRequest ||
+          _arena?['id'] != arena['id']) {
+        return;
       }
       setState(() {
-        _busyIntervals = intervals;
-        _selectedScheduleSlots = nextSelection;
-        if (nextSelection.isNotEmpty) {
-          _start = nextSelection.first;
-          _end = nextSelection.last.add(const Duration(hours: 1));
-        }
+        _serverSlots = intervals;
         _loadingAvailability = false;
       });
-    } on PostgrestException {
-      if (!mounted) return;
+    } catch (_) {
+      if (!mounted || request != _availabilityRequest) return;
       setState(() {
+        _serverSlots = [];
         _loadingAvailability = false;
         _availabilityError = tr(
           'Could not load availability. Try again.',
@@ -138,15 +129,16 @@ class _CreateGamePageState extends State<CreateGamePage> {
   }
 
   Future<void> _changeScheduleMonth(int delta) async {
-    final next = DateTime(_visibleMonth.year, _visibleMonth.month + delta);
-    final today = DateUtils.dateOnly(DateTime.now());
-    final firstAllowed = DateTime(today.year, today.month);
-    final lastAllowed = DateTime(today.year, today.month + 12);
+    final next = DateTime.utc(_visibleMonth.year, _visibleMonth.month + delta);
+    final today = omanDateOnly(toOmanTime(DateTime.now()));
+    final firstAllowed = DateTime.utc(today.year, today.month);
+    final lastAllowed = DateTime.utc(today.year, today.month + 12);
     if (next.isBefore(firstAllowed) || next.isAfter(lastAllowed)) return;
     setState(() {
       _visibleMonth = next;
       _selectedScheduleDate = null;
       _selectedScheduleSlots = [];
+      _serverSlots = [];
     });
     await _loadScheduleAvailability();
   }
@@ -154,16 +146,18 @@ class _CreateGamePageState extends State<CreateGamePage> {
   void _selectScheduleDate(DateTime date) {
     if (_isScheduleDayUnavailable(date)) return;
     setState(() {
-      _selectedScheduleDate = DateUtils.dateOnly(date);
+      _selectedScheduleDate = omanDateOnly(date);
       _selectedScheduleSlots = [];
     });
   }
 
-  void _toggleScheduleSlot(DateTime slot) {
+  Future<void> _toggleScheduleSlot(DateTime slot) async {
+    if (_checkingSelection || _saving || _loadingAvailability) return;
     final result = toggleConsecutiveBookingSlot(
       current: _selectedScheduleSlots,
       slot: slot,
       unavailable: _isScheduleSlotUnavailable(slot),
+      slotDuration: bookingSlotDuration,
     );
     if (result.nonConsecutive) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -178,7 +172,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
       );
       return;
     }
-    if (result.selected.length > _maximumGameDuration.inHours) {
+    if (result.selected.length > _maximumGameDuration.inMinutes ~/ 30) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -191,52 +185,68 @@ class _CreateGamePageState extends State<CreateGamePage> {
       );
       return;
     }
-    setState(() {
-      _selectedScheduleSlots = result.selected;
-      if (result.selected.isNotEmpty) {
-        _start = result.selected.first;
-        _end = result.selected.last.add(const Duration(hours: 1));
+    final day = _selectedScheduleDate, arenaId = _arena?['id'];
+    setState(() => _checkingSelection = true);
+    try {
+      if (result.selected.isNotEmpty &&
+          !await ProductionRepository.rangeAvailable(
+            '$arenaId',
+            result.selected.first,
+            result.selected.last.add(bookingSlotDuration),
+          )) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                tr(
+                  'No single court is free for this entire range.',
+                  'لا يوجد ملعب واحد متاح طوال الفترة.',
+                ),
+              ),
+            ),
+          );
+        }
+        return;
       }
-    });
+      if (!mounted ||
+          day != _selectedScheduleDate ||
+          arenaId != _arena?['id']) {
+        return;
+      }
+      setState(() {
+        _selectedScheduleSlots = result.selected;
+        if (result.selected.isNotEmpty) {
+          _start = result.selected.first;
+          _end = result.selected.last.add(bookingSlotDuration);
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              _availabilityError = tr(
+                'Could not check availability. Retry.',
+                'تعذر التحقق من التوفر. أعد المحاولة.',
+              ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingSelection = false);
+    }
   }
 
-  List<DateTime> _scheduleSlotsFor(DateTime date) {
-    final arena = _arena;
-    if (arena == null) return const [];
-    return _hourlySlotsForArena(arena, date);
-  }
+  List<DateTime> _scheduleSlotsFor(DateTime date) =>
+      slotsOnDate(_serverSlots, date);
 
   bool _isScheduleSlotUnavailable(DateTime slot) =>
-      !slot.isAfter(DateTime.now()) || isBookingSlotBusy(slot, _busyIntervals);
+      !slot.isAfter(toOmanTime(DateTime.now())) ||
+      serverSlotUnavailable(_serverSlots, slot);
 
   bool _isScheduleDayUnavailable(DateTime date) {
-    final day = DateUtils.dateOnly(date);
-    if (day.isBefore(DateUtils.dateOnly(DateTime.now()))) return true;
+    final day = omanDateOnly(date);
+    if (day.isBefore(omanDateOnly(toOmanTime(DateTime.now())))) return true;
     final slots = _scheduleSlotsFor(day);
     return slots.isEmpty || slots.every(_isScheduleSlotUnavailable);
-  }
-
-  DateTime _firstFutureHourlySlot(Map<String, dynamic> arena) {
-    var day = DateUtils.dateOnly(DateTime.now());
-    for (var attempt = 0; attempt < 366; attempt++) {
-      for (final slot in _hourlySlotsForArena(arena, day)) {
-        if (slot.isAfter(DateTime.now())) return slot;
-      }
-      day = day.add(const Duration(days: 1));
-    }
-    return DateTime.now().add(const Duration(hours: 1));
-  }
-
-  Future<bool> _scheduleStillAvailable() async {
-    if (_selectedScheduleSlots.isEmpty) return false;
-    final latest = await ProductionRepository.arenaBusyIntervals(
-      arenaId: '${_arena?['id'] ?? ''}',
-      from: _selectedScheduleSlots.first,
-      to: _selectedScheduleSlots.last.add(const Duration(hours: 1)),
-    );
-    return _selectedScheduleSlots.every(
-      (slot) => !isBookingSlotBusy(slot, latest),
-    );
   }
 
   List<DateTime> get _visibleScheduleSlots {
@@ -247,7 +257,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
   bool get _hasValidDuration {
     final duration = _end.difference(_start);
     return _selectedScheduleSlots.isNotEmpty &&
-        duration >= const Duration(hours: 1) &&
+        duration >= bookingSlotDuration &&
         duration <= _maximumGameDuration;
   }
 
@@ -309,6 +319,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
   }
 
   Future<void> _save() async {
+    if (_saving || _checkingSelection) return;
     if (!await GuestSession.requireAccount(context, action: 'create a game')) {
       return;
     }
@@ -329,46 +340,30 @@ class _CreateGamePageState extends State<CreateGamePage> {
     }
     final arena = _arena;
     final userId = Supabase.instance.client.auth.currentUser?.id;
-    if (arena == null || userId == null) return;
+    if (arena == null || userId == null || !mounted) return;
     setState(() => _saving = true);
     try {
-      if (!await _scheduleStillAvailable()) {
-        if (!mounted) return;
-        setState(() {
-          _step = 1;
-          _selectedScheduleSlots = [];
-        });
-        await _loadScheduleAvailability();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              tr(
-                'One of these hours was just booked. Choose another time.',
-                'تم حجز إحدى هذه الساعات للتو. اختر وقتًا آخر.',
+      await Navigator.push<Map<String, dynamic>>(
+        context,
+        MaterialPageRoute(
+          builder:
+              (_) => CheckoutPage(
+                requestKey: _requestId,
+                request: {
+                  'purpose': 'match',
+                  'arena_id': arena['id'],
+                  'name': _name.text.trim(),
+                  'description': _description.text.trim(),
+                  'rules': _rules.text.trim(),
+                  'sport': widget.sport,
+                  'starts_at': omanWallToUtc(_start).toIso8601String(),
+                  'ends_at': omanWallToUtc(_end).toIso8601String(),
+                  'capacity': _maxPlayers,
+                  'is_private': _private,
+                  'show_joined_players': _showJoinedPlayers,
+                },
               ),
-            ),
-          ),
-        );
-        return;
-      }
-      await Supabase.instance.client.rpc(
-        'create_arena_match',
-        params: {
-          'p_arena_id': arena['id'],
-          'p_name': _name.text.trim(),
-          'p_description': _description.text.trim(),
-          'p_rules': _rules.text.trim(),
-          'p_sport': widget.sport,
-          'p_starts_at': _start.toUtc().toIso8601String(),
-          'p_ends_at': _end.toUtc().toIso8601String(),
-          'p_max_players': _maxPlayers,
-          'p_is_private': _private,
-          'p_show_joined_players': _showJoinedPlayers,
-          'p_payment_method':
-              _payment.toLowerCase() == 'cash' ? 'cash' : 'card',
-          'p_idempotency_key': _requestId,
-        },
+        ),
       );
       if (!mounted) return;
       Navigator.of(context).pop(_start);
@@ -407,7 +402,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
   Widget build(BuildContext context) {
     final scheduleStep = _step == 1;
     return Scaffold(
-      backgroundColor: scheduleStep ? AppColors.navy : const Color(0xFFFFFDF8),
+      backgroundColor: scheduleStep ? AppColors.navy : const Color(0xFFF4F7F9),
       body: SafeArea(
         child: ColoredBox(
           color: const Color(0xFFFFFEFC),
@@ -449,7 +444,10 @@ class _CreateGamePageState extends State<CreateGamePage> {
                       height: scheduleStep ? 58 : 80,
                       width: double.infinity,
                       child: FilledButton(
-                        onPressed: _saving || !_stepValid ? null : _continue,
+                        onPressed:
+                            _saving || _checkingSelection || !_stepValid
+                                ? null
+                                : _continue,
                         style: FilledButton.styleFrom(
                           backgroundColor:
                               scheduleStep
@@ -491,7 +489,7 @@ class _CreateGamePageState extends State<CreateGamePage> {
     1 => ArenaSchedulePicker(
       visibleMonth: _visibleMonth,
       selectedDate: _selectedScheduleDate,
-      loading: _loadingAvailability,
+      loading: _loadingAvailability && _serverSlots.isEmpty,
       errorMessage: _availabilityError,
       isDayUnavailable: _isScheduleDayUnavailable,
       onDateSelected: _selectScheduleDate,
@@ -518,10 +516,13 @@ class _CreateGamePageState extends State<CreateGamePage> {
       onShowJoinedPlayers:
           (value) => setState(() => _showJoinedPlayers = value),
     ),
-    _ => _PaymentStep(
-      value: _payment,
-      price: _price,
-      onChanged: (value) => setState(() => _payment = value),
+    _ => Center(
+      child: Text(
+        tr(
+          'Card only. Choose who pays on the review screen.',
+          'الدفع بالبطاقة فقط. اختر من يدفع في صفحة المراجعة.',
+        ),
+      ),
     ),
   };
 }
@@ -549,7 +550,7 @@ class _GameScheduleHeader extends StatelessWidget {
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 25,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
@@ -604,7 +605,7 @@ class _WizardHeader extends StatelessWidget {
                 maxLines: 1,
                 style: const TextStyle(
                   fontSize: 27,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -640,11 +641,11 @@ class _WizardHeader extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight:
-                            index == step ? FontWeight.w800 : FontWeight.w500,
+                            index == step ? FontWeight.w700 : FontWeight.w500,
                         color:
                             index == step
                                 ? const Color(0xFF000000)
-                                : const Color(0x99000000),
+                                : const Color(0xFF607184),
                       ),
                     ),
                     const Spacer(),
@@ -691,10 +692,10 @@ class _WhereStep extends StatelessWidget {
           children: [
             Text(
               'Select a stadium',
-              style: TextStyle(color: Color(0x99000000), fontSize: 18),
+              style: TextStyle(color: Color(0xFF607184), fontSize: 18),
             ),
             Spacer(),
-            Icon(Icons.search_rounded, color: Color(0x99000000)),
+            Icon(Icons.search_rounded, color: Color(0xFF607184)),
           ],
         ),
       ),
@@ -718,7 +719,7 @@ class _WhereStep extends StatelessWidget {
                 ),
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                 ),
               ),
               subtitle: Text(
@@ -728,7 +729,7 @@ class _WhereStep extends StatelessWidget {
                   englishFallback: 'Location unavailable',
                   arabicFallback: 'الموقع غير متاح',
                 ),
-                style: const TextStyle(color: Color(0x99000000)),
+                style: const TextStyle(color: Color(0xFF607184)),
               ),
               trailing:
                   isSelected
@@ -796,7 +797,7 @@ class _SettingsStep extends StatelessWidget {
       ),
       Text(
         tr('Maximum players', 'الحد الأقصى للاعبين'),
-        style: const TextStyle(color: Color(0x99000000)),
+        style: const TextStyle(color: Color(0xFF607184)),
       ),
       const SizedBox(height: 7),
       Container(
@@ -850,7 +851,7 @@ class _SettingsStep extends StatelessWidget {
       ),
       Text(
         tr('Game gender', 'جنس المباراة'),
-        style: const TextStyle(color: Color(0x99000000)),
+        style: const TextStyle(color: Color(0xFF607184)),
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,
@@ -866,71 +867,6 @@ class _SettingsStep extends StatelessWidget {
             'Matches use the arena and account gender automatically.',
             'يُحدد جنس المباراة تلقائيًا حسب الملعب والحساب.',
           ),
-        ),
-      ),
-    ],
-  );
-}
-
-class _PaymentStep extends StatelessWidget {
-  const _PaymentStep({
-    required this.value,
-    required this.price,
-    required this.onChanged,
-  });
-  final String value;
-  final double price;
-  final ValueChanged<String> onChanged;
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        tr('Payment', 'الدفع'),
-        style: const TextStyle(color: Color(0x99000000), fontSize: 18),
-      ),
-      const SizedBox(height: 8),
-      Row(
-        children:
-            ['Cash', 'Visa']
-                .map(
-                  (item) => Expanded(
-                    child: RadioListTile<String>(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        item == 'Cash'
-                            ? tr('Cash', 'نقدًا')
-                            : tr('Visa', 'بطاقة مصرفية'),
-                      ),
-                      value: item,
-                      // RadioGroup is unavailable on older supported Flutter
-                      // versions; keep the compatible API until the minimum
-                      // SDK is raised.
-                      // ignore: deprecated_member_use
-                      groupValue: value,
-                      // ignore: deprecated_member_use
-                      onChanged: (choice) {
-                        if (choice != null) onChanged(choice);
-                      },
-                    ),
-                  ),
-                )
-                .toList(),
-      ),
-      const SizedBox(height: 16),
-      Text(
-        tr('Price per player', 'السعر لكل لاعب'),
-        style: const TextStyle(color: Color(0x99000000), fontSize: 18),
-      ),
-      const SizedBox(height: 8),
-      Container(
-        height: 66,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: _fieldDecoration(),
-        alignment: Alignment.centerLeft,
-        child: OmrPrice(
-          value: price,
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
       ),
     ],
@@ -955,7 +891,7 @@ class _Input extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(color: Color(0x99000000), fontSize: 18),
+          style: const TextStyle(color: Color(0xFF607184), fontSize: 18),
         ),
         const SizedBox(height: 7),
         TextField(
@@ -964,16 +900,16 @@ class _Input extends StatelessWidget {
           onChanged: (_) {},
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(color: Color(0x99000000), fontSize: 17),
+            hintStyle: const TextStyle(color: Color(0xFF607184), fontSize: 17),
             filled: true,
-            fillColor: const Color(0xFFFFFDF8),
+            fillColor: const Color(0xFFF4F7F9),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0x52000000)),
+              borderSide: const BorderSide(color: Color(0xFFDCE3E9)),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0x52000000)),
+              borderSide: const BorderSide(color: Color(0xFFDCE3E9)),
             ),
           ),
         ),
@@ -983,58 +919,11 @@ class _Input extends StatelessWidget {
 }
 
 BoxDecoration _fieldDecoration() => BoxDecoration(
-  color: const Color(0xFFFFFDF8),
-  border: Border.all(color: const Color(0x52000000)),
+  color: const Color(0xFFF4F7F9),
+  border: Border.all(color: const Color(0xFFDCE3E9)),
   borderRadius: BorderRadius.circular(16),
 );
 DateTime _roundToBookingSlot(DateTime value) {
-  final hour = DateTime(value.year, value.month, value.day, value.hour);
-  return value.minute == 0 ? hour : hour.add(const Duration(hours: 1));
-}
-
-List<DateTime> _hourlySlotsForArena(Map<String, dynamic> arena, DateTime date) {
-  final opening = _parseArenaTime(arena['opening_time']?.toString());
-  final closing = _parseArenaTime(arena['closing_time']?.toString());
-  final day = DateUtils.dateOnly(date);
-  final slots = <DateTime>[];
-
-  void addOperatingPeriod(DateTime operatingDay) {
-    final periodStart = DateTime(
-      operatingDay.year,
-      operatingDay.month,
-      operatingDay.day,
-      opening.$1,
-      opening.$2,
-    );
-    var periodEnd = DateTime(
-      operatingDay.year,
-      operatingDay.month,
-      operatingDay.day,
-      closing.$1,
-      closing.$2,
-    );
-    if (!periodEnd.isAfter(periodStart)) {
-      periodEnd = periodEnd.add(const Duration(days: 1));
-    }
-    for (
-      var value = periodStart;
-      !value.add(const Duration(hours: 1)).isAfter(periodEnd);
-      value = value.add(const Duration(hours: 1))
-    ) {
-      if (DateUtils.isSameDay(value, day)) slots.add(value);
-    }
-  }
-
-  addOperatingPeriod(day.subtract(const Duration(days: 1)));
-  addOperatingPeriod(day);
-  slots.sort();
-  return slots.toSet().toList();
-}
-
-(int, int) _parseArenaTime(String? value) {
-  if (value == null || value.trim().isEmpty) return (0, 0);
-  final parts = value.split(':');
-  final hour = int.tryParse(parts.first) ?? 0;
-  final minute = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
-  return (hour.clamp(0, 23), minute.clamp(0, 59));
+  final hour = DateTime.utc(value.year, value.month, value.day, value.hour);
+  return value.minute == 0 ? hour : hour.add(bookingSlotDuration);
 }

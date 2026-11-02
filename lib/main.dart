@@ -1,6 +1,9 @@
+import 'core/services/secure_session_storage.dart';
 import 'dart:async';
+import 'core/services/phone_auth_config.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -8,15 +11,42 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/arena_typography.dart';
 import 'core/constants/supabase.dart';
+import 'core/services/backend_environment.dart';
 import 'core/services/push_notification_service.dart';
 
 import 'splash_page.dart';
-import 'features/authentication/pages/login_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Color(0xFFF4F7F9),
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ),
+  );
 
-  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  BackendEnvironment.validate(
+    environment: const String.fromEnvironment(
+      'ARENA_ENV',
+      defaultValue: 'staging',
+    ),
+    url: supabaseUrl,
+    key: supabaseAnonKey,
+    allowProduction: const bool.fromEnvironment('ARENA_ALLOW_PRODUCTION'),
+  );
+  PhoneAuthConfig.build(supabaseUrl).validate();
+  await Supabase.initialize(
+    url: supabaseUrl,
+    anonKey: supabaseAnonKey,
+    authOptions: FlutterAuthClientOptions(
+      localStorage: SecureSessionStorage(
+        key: 'sb-${Uri.parse(supabaseUrl).host.split(".").first}-auth-token',
+      ),
+    ),
+  );
   final preferences = await SharedPreferences.getInstance();
   appLanguage.value = preferences.getString('app_language') ?? 'en';
 
@@ -41,36 +71,13 @@ class ArenaReservationApp extends StatefulWidget {
 }
 
 class _ArenaReservationAppState extends State<ArenaReservationApp> {
-  StreamSubscription<AuthState>? _authSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
-      state,
-    ) {
-      if (state.event == AuthChangeEvent.passwordRecovery) {
-        appNavigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const ResetPasswordPage()),
-          (_) => false,
-        );
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _authSubscription?.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
       valueListenable: appLanguage,
       builder:
           (context, language, _) => MaterialApp(
-            title: language == 'ar' ? 'أرينا' : 'Arena',
+            title: 'Arena Reservation',
 
             navigatorKey: appNavigatorKey,
 
@@ -88,7 +95,10 @@ class _ArenaReservationAppState extends State<ArenaReservationApp> {
                 (context, child) => Directionality(
                   textDirection:
                       language == 'ar' ? TextDirection.rtl : TextDirection.ltr,
-                  child: child ?? const SizedBox.shrink(),
+                  child: AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: SystemUiOverlayStyle.dark,
+                    child: child ?? const SizedBox.shrink(),
+                  ),
                 ),
 
             home: const SplashPage(),

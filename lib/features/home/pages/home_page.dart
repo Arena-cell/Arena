@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../explore/pages/production_arena_details_page.dart';
 import '../../notifications/pages/notifications_page.dart';
+import '../../bookings/pages/my_bookings_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -124,7 +125,7 @@ class _HomePageState extends State<HomePage> {
             : displayName.split(RegExp(r'\s+')).first;
     final avatar = metadata['avatar_url'] as String?;
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFDF8),
+      backgroundColor: const Color(0xFFF4F7F9),
       body: DecoratedBox(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -133,8 +134,8 @@ class _HomePageState extends State<HomePage> {
             colors: [
               AppColors.navy,
               AppColors.navy,
-              Color(0xFFFFFDF8),
-              Color(0xFFFFFDF8),
+              Color(0xFFF4F7F9),
+              Color(0xFFF4F7F9),
             ],
             stops: [0, .10, .17, 1],
           ),
@@ -179,7 +180,7 @@ class _HomePageState extends State<HomePage> {
                                 : name,
                             style: const TextStyle(
                               fontSize: 17,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                               color: AppColors.warmWhite,
                             ),
                           ),
@@ -251,13 +252,18 @@ class _HomePageState extends State<HomePage> {
                                 tr('Your next booking', 'حجزك القادم'),
                                 style: const TextStyle(
                                   fontSize: 21,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: FontWeight.w700,
                                   color: AppColors.navy,
                                 ),
                               ),
                               const Spacer(),
                               TextButton(
-                                onPressed: () {},
+                                onPressed:
+                                    () => Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => const MyBookingsPage(),
+                                      ),
+                                    ),
                                 child: Text(
                                   tr('View all', 'عرض الكل'),
                                   style: const TextStyle(
@@ -380,7 +386,7 @@ class _HomeBookingCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w700,
                               color: AppColors.navy,
                             ),
                           ),
@@ -404,7 +410,7 @@ class _HomeBookingCard extends StatelessWidget {
                               arabicFallback: 'الموقع غير متاح',
                             ),
                           ),
-                          const Spacer(),
+                          const SizedBox(height: 12),
                           OutlinedButton(
                             onPressed:
                                 arenaId == null
@@ -444,7 +450,7 @@ class _HomeBookingCard extends StatelessWidget {
                       : tr('Confirmed', 'مؤكد'),
                   style: const TextStyle(
                     color: AppColors.brandGreenMedium,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -481,7 +487,7 @@ class _BookingImagePlaceholder extends StatelessWidget {
   const _BookingImagePlaceholder();
   @override
   Widget build(BuildContext context) => ColoredBox(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     child: Center(
       child: Image.asset(
         'assets/images/arena_primary_emblem.png',
@@ -518,7 +524,7 @@ class _EmptyHomeContent extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 26,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 8),
@@ -528,7 +534,7 @@ class _EmptyHomeContent extends StatelessWidget {
                   'احجز ملعبًا ليظهر حجزك القادم هنا.',
                 ),
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0x99000000), fontSize: 16),
+                style: const TextStyle(color: Color(0xFF607184), fontSize: 16),
               ),
             ],
           ),
@@ -552,7 +558,7 @@ class _HomeMessage extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
         Text(subtitle),
         TextButton(

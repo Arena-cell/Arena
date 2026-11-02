@@ -16,7 +16,7 @@ Future<GameFilters?> showGameFilters(
   context: context,
   isScrollControlled: true,
   useSafeArea: true,
-  backgroundColor: const Color(0xFFFFFDF8),
+  backgroundColor: const Color(0xFFF4F7F9),
   shape: const RoundedRectangleBorder(
     borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
   ),
@@ -69,7 +69,7 @@ class _GameFiltersSheetState extends State<_GameFiltersSheet> {
             Text(
               tr('Game Filters', 'تصفية المباريات'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 27, fontWeight: FontWeight.w800),
+              style: TextStyle(fontSize: 27, fontWeight: FontWeight.w700),
             ),
             _Choice<String>(
               title: tr('Sport', 'الرياضة'),

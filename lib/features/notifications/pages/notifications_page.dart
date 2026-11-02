@@ -5,6 +5,7 @@ import '../../../core/localization/app_localizations.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/oman_time.dart';
 import '../../bookings/pages/my_bookings_page.dart';
+import '../../bookings/pages/checkout_page.dart';
 import '../../explore/pages/production_arena_details_page.dart';
 import '../../games/pages/match_details_page.dart';
 import '../../../shared/widgets/arena_empty_state.dart';
@@ -18,11 +19,37 @@ class NotificationsPage extends StatefulWidget {
 
 class _NotificationsPageState extends State<NotificationsPage> {
   late Future<List<Map<String, dynamic>>> _loader;
+  RealtimeChannel? _channel;
 
   @override
   void initState() {
     super.initState();
     _loader = _load();
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      _channel =
+          Supabase.instance.client.channel('inbox-${user.id}')
+            ..onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'notifications',
+              filter: PostgresChangeFilter(
+                type: PostgresChangeFilterType.eq,
+                column: 'user_id',
+                value: user.id,
+              ),
+              callback: (_) {
+                if (mounted) _refresh();
+              },
+            )
+            ..subscribe();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_channel != null) Supabase.instance.client.removeChannel(_channel!);
+    super.dispose();
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
@@ -56,11 +83,26 @@ class _NotificationsPageState extends State<NotificationsPage> {
     );
     final arenaId = data['arena_id'] as String?;
     final matchId = data['match_id'] as String?;
+    final bookingId = data['booking_id'] as String?;
+    final orderId = data['order_id'] as String?;
+    final order =
+        orderId == null
+            ? null
+            : await Supabase.instance.client
+                .from('checkout_orders')
+                .select()
+                .eq('id', orderId)
+                .maybeSingle();
+    if (!mounted) return;
     final Widget destination =
-        arenaId != null
-            ? ProductionArenaDetailsPage(arenaId: arenaId)
-            : matchId != null
+        matchId != null
             ? MatchDetailsPage(matchId: matchId)
+            : bookingId != null
+            ? MyBookingsPage(initialBookingId: bookingId)
+            : order != null
+            ? PaymentOrderPage(order: order)
+            : arenaId != null
+            ? ProductionArenaDetailsPage(arenaId: arenaId)
             : const MyBookingsPage();
     await Navigator.of(
       context,
@@ -140,7 +182,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 title: Text(
                   localizedTitle,
                   style: TextStyle(
-                    fontWeight: unread ? FontWeight.w800 : FontWeight.w600,
+                    fontWeight: unread ? FontWeight.w700 : FontWeight.w600,
                   ),
                 ),
                 subtitle: Column(

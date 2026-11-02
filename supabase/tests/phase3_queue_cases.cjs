@@ -1,0 +1,30 @@
+module.exports=({sql,run,q,test,assert,uid})=>{
+ const crypto=require('node:crypto');
+ const notification=sql(`insert into notifications(user_id,type,title,body,event_key) values(${q(uid(1))},'match_confirmed','Arena','Local queue test','local-queue-${crypto.randomUUID()}') returning id`);
+ const token=sql(`insert into device_tokens(user_id,token,platform) values(${q(uid(1))},'local_test_token_${crypto.randomUUID()}','android') returning id`);
+ const otherToken=sql(`insert into device_tokens(user_id,token,platform) values(${q(uid(2))},'local_test_token_${crypto.randomUUID()}','android') returning id`);
+ test('Push claim validates token recipient',()=>assert.throws(()=>sql(`set role service_role;select * from claim_notification_push_delivery(${q(notification)},${q(otherToken)})`),/TOKEN_RECIPIENT_MISMATCH/));
+ const claim=()=>sql(`set role service_role;select delivery_id from claim_notification_push_delivery(${q(notification)},${q(token)})`);
+ const delivery=claim();
+ test('Delivery claimed exactly once while leased',()=>{assert.ok(delivery);assert.equal(claim(),'');});
+ sql(`update notification_push_deliveries set status='failed',next_attempt_at=now()+interval '5 minutes' where id=${q(delivery)}`);
+ test('Retry respects backoff',()=>assert.equal(claim(),''));
+ sql(`update notification_push_deliveries set next_attempt_at=now()-interval '1 minute' where id=${q(delivery)}`);
+ test('Retry after explicit provider failure',()=>assert.equal(claim(),delivery));
+ sql(`update notification_push_deliveries set status='sent' where id=${q(delivery)}`);
+ test('Sent delivery never reclaims',()=>assert.equal(claim(),''));
+ sql(`update device_tokens set is_active=false where id=${q(token)}`);
+ test('Expired token disabled without erasing delivery log',()=>{assert.throws(claim,/TOKEN_RECIPIENT_MISMATCH/);assert.equal(sql(`select count(*) from notification_push_deliveries where id=${q(delivery)}`),'1');});
+ test('Users cannot send push or claim queued work',()=>{
+  for(const s of [`select * from claim_arena_push_batch(1)`,`select * from claim_notification_push_delivery(${q(notification)},${q(token)})`,`update notifications set delivery_status='sent' where id=${q(notification)}`])assert.throws(()=>run(1,s),/permission denied/);
+ });
+ test('Users may mark only inbox read column',()=>{run(1,`update notifications set read_at=now() where id=${q(notification)}`);assert.equal(sql(`select read_at is not null from notifications where id=${q(notification)}`),'t');});
+ sql(`update notifications set delivery_status='sent' where id<>${q(notification)}`);
+ const batch=JSON.parse(sql(`set role service_role;select to_jsonb(n) from claim_arena_push_batch(1)n`));
+ test('Durable queue lease excludes duplicate job',()=>assert.equal(sql(`set role service_role;select count(*) from claim_arena_push_batch(1)`),'0'));
+ test('Stale worker cannot complete another lease',()=>{sql(`set role service_role;select finish_arena_push(${q(notification)},${q(crypto.randomUUID())},'sent')`);assert.equal(sql(`select delivery_status from notifications where id=${q(notification)}`),'sending');});
+ sql(`set role service_role;select finish_arena_push(${q(notification)},${q(batch.lease_id)},'failed')`);
+ test('Failure schedules retry without losing notification',()=>assert.equal(sql(`select delivery_status||':'||(next_attempt_at>now()) from notifications where id=${q(notification)}`),'failed:true'));
+ sql(`update notifications set delivery_status='sending',lease_until=now()-interval '1 minute' where id=${q(notification)}`);
+ test('Worker crash lease recovers after outage',()=>assert.equal(sql(`set role service_role;select count(*) from claim_arena_push_batch(1)`),'1'));
+};

@@ -1,4 +1,6 @@
+import '../../../core/services/validated_image_upload.dart';
 import 'dart:async';
+import '../widgets/private_chat_image.dart';
 
 import 'package:flutter/material.dart';
 import '../../../core/localization/app_localizations.dart';
@@ -45,7 +47,7 @@ class _MessagesPageState extends State<MessagesPage> {
       if (directId.isNotEmpty) {
         final profile =
             await Supabase.instance.client
-                .from('profiles')
+                .from('public_profiles')
                 .select('first_name,display_name')
                 .eq('id', directId)
                 .maybeSingle();
@@ -115,7 +117,7 @@ class _MessagesPageState extends State<MessagesPage> {
     if (latest.isNotEmpty) {
       profiles =
           await Supabase.instance.client
-                  .from('profiles')
+                  .from('public_profiles')
                   .select('id, username, display_name, first_name')
                   .inFilter('id', latest.keys.toList())
               as List<dynamic>;
@@ -203,7 +205,7 @@ class _MessagesPageState extends State<MessagesPage> {
   void _refresh() => setState(() => _loader = _load());
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFFFFDF8),
+    backgroundColor: const Color(0xFFF4F7F9),
     body: SafeArea(
       child: Column(
         children: [
@@ -216,7 +218,7 @@ class _MessagesPageState extends State<MessagesPage> {
                     tr('Messages', 'الرسائل'),
                     style: const TextStyle(
                       fontSize: 25,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       color: Color(0xFF0D2946),
                     ),
                   ),
@@ -242,7 +244,7 @@ class _MessagesPageState extends State<MessagesPage> {
               ),
               title: Text(
                 tr('Arena Assistant', 'مساعد أرينا'),
-                style: const TextStyle(fontWeight: FontWeight.w800),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               subtitle: Text(
                 tr(
@@ -268,7 +270,7 @@ class _MessagesPageState extends State<MessagesPage> {
                 hintText: tr('Search conversations', 'ابحث في المحادثات'),
                 prefixIcon: const Icon(Icons.search_rounded),
                 filled: true,
-                fillColor: const Color(0xFFFFFDF8),
+                fillColor: const Color(0xFFF4F7F9),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: const BorderSide(color: Color(0x33000000)),
@@ -457,18 +459,45 @@ class _ChatPageState extends State<_ChatPage> {
     if (message.isEmpty && imageUrl == null) return;
     final me = Supabase.instance.client.auth.currentUser?.id;
     if (me == null) return;
-    await Supabase.instance.client
-        .from(widget.conversation.group ? 'group_messages' : 'direct_messages')
-        .insert({
-          'sender_id': me,
-          if (widget.conversation.group) 'group_id': widget.conversation.id,
-          if (!widget.conversation.group) 'receiver_id': widget.conversation.id,
-          'content': message,
-          'image_url': imageUrl,
-        });
+    try {
+      await Supabase.instance.client
+          .from(
+            widget.conversation.group ? 'group_messages' : 'direct_messages',
+          )
+          .insert({
+            'sender_id': me,
+            if (widget.conversation.group) 'group_id': widget.conversation.id,
+            if (!widget.conversation.group)
+              'receiver_id': widget.conversation.id,
+            'content': message,
+            'image_url': imageUrl,
+          });
+    } on PostgrestException catch (error) {
+      _showContactError(error);
+      return;
+    }
     if (!mounted) return;
     _text.clear();
     setState(() => _loader = _load());
+  }
+
+  void _showContactError(PostgrestException error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error.message.contains('CONTACT_BLOCKED')
+              ? tr(
+                'Contact is unavailable because one of you blocked the other.',
+                'التواصل غير متاح لوجود حظر بين الحسابين.',
+              )
+              : tr(
+                'Could not complete this action. Please try again.',
+                'تعذر إكمال العملية. أعد المحاولة.',
+              ),
+        ),
+      ),
+    );
   }
 
   Future<void> _actions() async {
@@ -508,21 +537,37 @@ class _ChatPageState extends State<_ChatPage> {
     if (!mounted || value == null) return;
     final me = Supabase.instance.client.auth.currentUser?.id;
     if (me == null) return;
-    if (value == 'friend') {
-      await Supabase.instance.client.from('friend_requests').upsert({
-        'sender_id': me,
-        'receiver_id': widget.conversation.id,
-        'status': 'pending',
-      });
-    }
-    if (value == 'block') {
-      await Supabase.instance.client.from('user_blocks').upsert({
-        'blocker_id': me,
-        'blocked_id': widget.conversation.id,
-      });
-      if (mounted) {
-        Navigator.pop(context);
+    try {
+      if (value == 'friend') {
+        final status = await Supabase.instance.client.rpc(
+          'request_friendship',
+          params: {'p_receiver': widget.conversation.id},
+        );
+        if (status == 'accepted') {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  tr('You are already friends.', 'أنتما صديقان بالفعل.'),
+                ),
+              ),
+            );
+          }
+          return;
+        }
       }
+      if (value == 'block') {
+        await Supabase.instance.client.from('user_blocks').upsert({
+          'blocker_id': me,
+          'blocked_id': widget.conversation.id,
+        });
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+    } on PostgrestException catch (error) {
+      _showContactError(error);
+      return;
     }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -611,7 +656,7 @@ class _ChatPageState extends State<_ChatPage> {
                             padding: const EdgeInsets.all(12),
                             constraints: const BoxConstraints(maxWidth: 300),
                             decoration: BoxDecoration(
-                              color: mine ? _green : const Color(0xFFFFFDF8),
+                              color: mine ? _green : const Color(0xFFF4F7F9),
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Column(
@@ -620,32 +665,7 @@ class _ChatPageState extends State<_ChatPage> {
                                 if (image != null)
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(12),
-                                    child: Image.network(
-                                      image,
-                                      fit: BoxFit.cover,
-                                      errorBuilder:
-                                          (_, _, _) => Container(
-                                            width: 190,
-                                            height: 130,
-                                            color: const Color(0x110D2946),
-                                            alignment: Alignment.center,
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(
-                                                  Icons.broken_image_outlined,
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  tr(
-                                                    'Image unavailable',
-                                                    'الصورة غير متاحة',
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                    ),
+                                    child: PrivateChatImage(reference: image),
                                   )
                                 else
                                   Text(
@@ -653,7 +673,7 @@ class _ChatPageState extends State<_ChatPage> {
                                     style: TextStyle(
                                       color:
                                           mine
-                                              ? const Color(0xFFFFFDF8)
+                                              ? const Color(0xFFF4F7F9)
                                               : Colors.black,
                                     ),
                                   ),
@@ -666,7 +686,7 @@ class _ChatPageState extends State<_ChatPage> {
                                     color:
                                         mine
                                             ? const Color(0xB3FFFDF8)
-                                            : const Color(0x99000000),
+                                            : const Color(0xFF607184),
                                   ),
                                 ),
                               ],
@@ -735,27 +755,18 @@ class _ChatPageState extends State<_ChatPage> {
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
       if (userId == null) return;
-      final extension = picked.name.split('.').last.toLowerCase();
-      final safeExtension =
-          {'jpg', 'jpeg', 'png', 'webp'}.contains(extension)
-              ? extension
-              : 'jpg';
-      final path =
-          '$userId/${DateTime.now().microsecondsSinceEpoch}.$safeExtension';
-      await client.storage
-          .from('chat-images')
-          .uploadBinary(
-            path,
-            await picked.readAsBytes(),
-            fileOptions: FileOptions(
-              contentType: picked.mimeType ?? 'image/$safeExtension',
-              upsert: false,
-            ),
-          );
-      if (!mounted) return;
-      await _send(
-        imageUrl: client.storage.from('chat-images').getPublicUrl(path),
+      final uploaded = await uploadValidatedImage(
+        bytes: await picked.readAsBytes(),
+        bucket: 'chat-images',
       );
+      if (!mounted) return;
+      await _send(imageUrl: uploaded['reference'] as String);
+    } on ImageUploadFailure catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     } on StorageException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -782,7 +793,7 @@ class _ConversationCard extends StatelessWidget {
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Material(
-    color: const Color(0xFFFFFDF8),
+    color: const Color(0xFFF4F7F9),
     borderRadius: BorderRadius.circular(16),
     child: InkWell(
       onTap: onTap,
@@ -802,7 +813,7 @@ class _ConversationCard extends StatelessWidget {
                 conversation.name.substring(0, 1).toUpperCase(),
                 style: const TextStyle(
                   color: _green,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   fontSize: 20,
                 ),
               ),
@@ -815,7 +826,7 @@ class _ConversationCard extends StatelessWidget {
                   Text(
                     conversation.name,
                     style: const TextStyle(
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       fontSize: 16,
                     ),
                   ),
@@ -825,7 +836,7 @@ class _ConversationCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0x99000000),
+                      color: Color(0xFF607184),
                       fontSize: 13,
                     ),
                   ),
@@ -839,7 +850,7 @@ class _ConversationCard extends StatelessWidget {
                   _time(conversation.createdAt),
                   style: const TextStyle(
                     fontSize: 11,
-                    color: Color(0x99000000),
+                    color: Color(0xFF607184),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -856,7 +867,7 @@ class _ConversationCard extends StatelessWidget {
                     child: Text(
                       '${conversation.unread}',
                       style: const TextStyle(
-                        color: Color(0xFFFFFDF8),
+                        color: Color(0xFFF4F7F9),
                         fontSize: 11,
                       ),
                     ),
@@ -887,13 +898,13 @@ class _EmptyState extends StatelessWidget {
           SizedBox(height: 38),
           Text(
             tr('No conversations', 'لا توجد محادثات'),
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
           SizedBox(height: 8),
           Text(
             tr('Your conversations will appear here.', 'ستظهر محادثاتك هنا.'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0x99000000)),
+            style: TextStyle(color: Color(0xFF607184)),
           ),
         ],
       ),
@@ -925,7 +936,7 @@ class _PeopleSearch extends SearchDelegate<_Person?> {
     final current = Supabase.instance.client.auth.currentUser?.id;
     final rows =
         await Supabase.instance.client
-                .from('profiles')
+                .from('public_profiles')
                 .select('id, username, display_name')
                 .or('username.ilike.%$query%,display_name.ilike.%$query%')
                 .limit(20)
@@ -1030,7 +1041,7 @@ class _MessageTimeDivider extends StatelessWidget {
       child: Text(
         '$day، ${_time(time)}',
         textDirection: TextDirection.ltr,
-        style: const TextStyle(color: Color(0x99000000), fontSize: 11),
+        style: const TextStyle(color: Color(0xFF607184), fontSize: 11),
       ),
     );
   }
@@ -1052,7 +1063,7 @@ class _CreateGroupPageState extends State<_CreateGroupPage> {
   Future<List<_Person>> _loadPeople() async {
     final me = Supabase.instance.client.auth.currentUser?.id;
     final rows = await Supabase.instance.client
-        .from('profiles')
+        .from('public_profiles')
         .select('id, username, display_name, first_name')
         .neq('id', me ?? '')
         .order('display_name');

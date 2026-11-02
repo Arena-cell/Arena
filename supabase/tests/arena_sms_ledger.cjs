@@ -1,0 +1,43 @@
+// Isolated disposable local database; never connects to Supabase or a provider.
+const cp=require('node:child_process'),fs=require('node:fs'),assert=require('node:assert/strict');
+const root=require('node:path').resolve(__dirname,'../..');process.chdir(root);
+const psql='C:/Program Files/PostgreSQL/18/bin/psql.exe',args=['-X','-h','127.0.0.1','-p','55439','-U','postgres','-v','ON_ERROR_STOP=1','-qAt'];
+const db='arena_sms_test_'+Date.now();
+const sql=(query,database=db)=>cp.execFileSync(psql,[...args,'-d',database],{input:query,encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim();
+assert.equal(sql('show data_directory','postgres').replaceAll('\\','/').toLowerCase(),(root+'/build/phase1-pgdata').replaceAll('\\','/').toLowerCase());
+sql('create database '+db,'postgres');sql(fs.readFileSync('supabase/staging/arena_sms_hook_preparation.sql','utf8'));
+let count=0;const check=(name,query,expected)=>{assert.equal(sql(query),expected,name);count++;console.log('PASS '+name)};
+const h=n=>n.toString(16).padStart(64,'0'),p=h(999);
+const reserve=(event,phone=p)=>`select arena_sms_reserve('${h(event)}','${phone}');`;
+const reset=()=>sql('truncate arena_sms_attempts;');
+check('unknown phone denied',reserve(1),'deny');
+sql(`insert into arena_sms_allowlist values('${p}',true)`);
+check('authorized reserve',reserve(1),'send');
+check('in-flight retry denied',reserve(1),'deny');
+check('cooldown enforced',reserve(2),'deny');
+sql(`select arena_sms_finish('${h(1)}','accepted')`);
+check('accepted retry idempotent',reserve(1),'accepted');
+sql(`select arena_sms_finish('${h(1)}','uncertain')`);
+check('accepted state immutable',reserve(1),'accepted');
+reset();check('fresh reservation',reserve(2),'send');sql(`select arena_sms_finish('${h(2)}','uncertain')`);
+check('unknown provider result not resent',reserve(2),'deny');
+check('invalid hashes rejected',"select arena_sms_reserve('x','x')",'deny');
+for(const role of ['anon','authenticated']){
+ check(role+' cannot reserve',`select has_function_privilege('${role}','arena_sms_reserve(text,text)','execute')::text`,'false');
+ check(role+' cannot finish',`select has_function_privilege('${role}','arena_sms_finish(text,text)','execute')::text`,'false');
+ check(role+' cannot read ledger',`select has_table_privilege('${role}','arena_sms_attempts','select')::text`,'false');
+}
+check('service role can reserve',"select has_function_privilege('service_role','arena_sms_reserve(text,text)','execute')::text",'true');
+check('service role cannot edit allowlist',"select has_table_privilege('service_role','arena_sms_allowlist','insert')::text",'false');
+check('RLS enabled',"select count(*) from pg_class where relname in ('arena_sms_allowlist','arena_sms_attempts') and relrowsecurity",'2');
+reset();sql(`insert into arena_sms_attempts(event_hash,phone_hash,created_at) select lpad(to_hex(n),64,'0'),'${p}',clock_timestamp()-interval '2 minutes' from generate_series(1,5)n`);
+check('per-phone hourly budget',reserve(10),'deny');
+reset();sql(`insert into arena_sms_attempts(event_hash,phone_hash,created_at) select lpad(to_hex(n),64,'0'),'${p}',clock_timestamp()-interval '2 hours' from generate_series(1,10)n`);
+check('per-phone daily budget',reserve(20),'deny');
+reset();sql(`insert into arena_sms_attempts(event_hash,phone_hash,created_at) select lpad(to_hex(n),64,'0'),lpad(to_hex(n+1000),64,'0'),clock_timestamp()-interval '2 minutes' from generate_series(1,30)n`);
+check('global hourly budget',reserve(40),'deny');
+reset();sql(`insert into arena_sms_attempts(event_hash,phone_hash,created_at) select lpad(to_hex(n),64,'0'),lpad(to_hex(n+1000),64,'0'),clock_timestamp()-interval '2 hours' from generate_series(1,100)n`);
+check('global daily budget',reserve(110),'deny');
+reset();
+const concurrent=query=>new Promise((resolve,reject)=>{const child=cp.spawn(psql,[...args,'-d',db],{stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);child.on('error',reject);child.on('exit',code=>code?reject(Error(err)):resolve(out.trim()));child.stdin.end(query)});
+(async()=>{const values=await Promise.all(Array.from({length:10},(_,i)=>concurrent(reserve(200+i))));assert.equal(values.filter(x=>x==='send').length,1);count++;console.log('PASS concurrent requests reserve one slot');console.log(`${count} SQL checks passed; database retained locally: ${db}`)})().catch(e=>{console.error(e.message);process.exitCode=1});

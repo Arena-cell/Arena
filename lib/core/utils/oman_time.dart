@@ -2,6 +2,19 @@ import '../localization/app_localizations.dart';
 
 const _omanOffset = Duration(hours: 4);
 
+/// Calendar-only values use UTC fields as a wall-clock representation.
+/// Convert once at the API boundary; never use the device timezone.
+DateTime omanDateOnly(DateTime wall) =>
+    DateTime.utc(wall.year, wall.month, wall.day);
+DateTime omanWallToUtc(DateTime wall) => DateTime.utc(
+  wall.year,
+  wall.month,
+  wall.day,
+  wall.hour,
+  wall.minute,
+  wall.second,
+).subtract(_omanOffset);
+
 /// Oman uses UTC+4 year-round and does not observe daylight-saving time.
 DateTime toOmanTime(DateTime value) => value.toUtc().add(_omanOffset);
 
